@@ -1,0 +1,146 @@
+@import "tailwindcss";
+@import "@fontsource-variable/manrope";
+@import "@fontsource/cormorant-garamond/500.css";
+
+@theme {
+  --color-primary: #032f22;
+  --color-primary-hover: #02271c;
+  --color-secondary: #0b4a37;
+  --color-gold: #e0c391;
+  --color-gold-dark: #cfae73;
+
+  --color-bg: #fdfcfa;
+  --color-surface: #ffffff;
+  --color-cream: #f6f0e6;
+  --color-cream-border: #eee6da;
+  --color-ivory: #faf8f4;
+  --color-sage: #eff3ee;
+  --color-border: #e8e3da;
+
+  --color-ink: #111714;
+  --color-ink2: #4f5853;
+  --color-ink3: #7a827e;
+
+  --color-ok: #267a50;
+  --color-ok-bg: #e5f4eb;
+  --color-warn: #9a5b13;
+  --color-warn-bg: #fff3dd;
+  --color-err: #b42318;
+  --color-err-bg: #fde9e7;
+  --color-info: #27678f;
+  --color-info-bg: #e8f2f8;
+  --color-dis: #8a918d;
+  --color-dis-bg: #f1f1ef;
+
+  /* validated categorical chart palette (dataviz six-checks, light surface) */
+  --color-c1: #a96a08;
+  --color-c2: #2f9e62;
+  --color-c3: #6e7be0;
+  --color-c4: #b6577a;
+
+  /* sidebar (deep green world) */
+  --color-side: #032f22;
+  --color-side-2: #0b4a37;
+  --color-side-ink: #b7cbc0;
+  --color-side-mut: #6f8f80;
+
+  --font-sans: "Manrope Variable", "Manrope", "Inter", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-logo: "Cormorant Garamond", "Iowan Old Style", Palatino, Georgia, serif;
+
+  --radius-btn: 12px;
+  --radius-card: 16px;
+  --radius-lg2: 18px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-gold-dark);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@keyframes chart-line-enter {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes chart-area-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes chart-bar-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes chart-bar-y {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+.chart-line-enter {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: chart-line-enter 700ms cubic-bezier(.22, 1, .36, 1) forwards;
+}
+
+.chart-area-enter {
+  transform-origin: center bottom;
+  animation: chart-area-enter 550ms ease-out both;
+}
+
+.chart-bar-x {
+  transform-origin: left center;
+  animation: chart-bar-x 520ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.chart-bar-y {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: chart-bar-y 520ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d8d3c8;
+  border-radius: 6px;
+  border: 2px solid var(--color-bg);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Print: the page body only — no sidebar, header, search or buttons. */
+@media print {
+  aside, header, nav, button, input, select, textarea, [data-tour="bell"], .no-print { display: none !important; }
+  main { padding: 0 !important; background: white !important; }
+  body { background: white !important; }
+  table { font-size: 11px; }
+}

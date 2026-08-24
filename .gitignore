@@ -1,0 +1,14 @@
+# dependencies / build output
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# local environment — never commit real keys; copy .env.example to .env
+.env
+.env.*
+!.env.example
+
+# editor / OS
+.DS_Store
+*.log
