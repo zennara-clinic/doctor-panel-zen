@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Check, ChevronDown, Loader2, RefreshCw, Search, X } from "lucide-react";
-import { isoDay } from "./lib/format";
+import { addClinicDays, clinicMonthEnd, clinicMonthStart, isoDay } from "./lib/format";
 
 /* ---------- async states ---------- */
 export function Spinner({ className = "h-4 w-4" }: { className?: string }) {
@@ -903,11 +903,13 @@ export function Chips({ options, value, onChange, multi }: {
 export function DateRange({ from, to, onChange, presets = true }: {
   from: string; to: string; onChange: (from: string, to: string) => void; presets?: boolean;
 }) {
-  const iso = (d: Date) => isoDay(d);
-  const today = new Date();
-  const preset = (days: number) => { const f = new Date(today); f.setDate(f.getDate() - days + 1); onChange(iso(f), iso(today)); };
-  const thisMonth = () => onChange(iso(new Date(today.getFullYear(), today.getMonth(), 1)), iso(today));
-  const lastMonth = () => onChange(iso(new Date(today.getFullYear(), today.getMonth() - 1, 1)), iso(new Date(today.getFullYear(), today.getMonth(), 0)));
+  const today = isoDay();
+  const preset = (days: number) => onChange(addClinicDays(today, -days + 1), today);
+  const thisMonth = () => onChange(clinicMonthStart(today), today);
+  const lastMonth = () => {
+    const end = addClinicDays(clinicMonthStart(today), -1);
+    onChange(clinicMonthStart(end), clinicMonthEnd(end));
+  };
   const cls = "w-full rounded-lg border border-border bg-ivory px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-gold-dark";
   return (
     <div>

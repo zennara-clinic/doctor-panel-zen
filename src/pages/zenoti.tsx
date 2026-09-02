@@ -20,28 +20,24 @@ import { useApi, useDebounced, usePoll } from "../lib/useApi";
 import { useQueryNumber, useQueryPage, useQueryString } from "../lib/useListState";
 import { useStore } from "../store";
 import { Page, Card, Btn, Stats, DataTable, Empty, Note, Tag, Prog, Tabs, Spinner, StaleBanner, B } from "../ui";
-import { fmtAgo } from "../lib/format";
+import { fmtAgo, fmtDateFull, fmtTime, isoDay, toDate } from "../lib/format";
 
 type SvcBalance = { name: string | null; total: number | null; used: number | null; balance: number | null };
 
 export function fmtZDate(s: string | null | undefined): string {
   if (!s) return "—";
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return String(s);
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  return toDate(s) ? fmtDateFull(s) : String(s);
 }
 export function fmtZWhen(s: string | null | undefined): string {
   if (!s) return "—";
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return String(s);
-  return d.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+  return toDate(s) ? `${fmtDateFull(s)}, ${fmtTime(s)}` : String(s);
 }
 export function money(n: number | null | undefined): string {
   return n === null || n === undefined ? "—" : `₹${Number(n).toLocaleString("en-IN")}`;
 }
 const num = (n: number | null | undefined) => (Number.isFinite(Number(n)) ? Number(n) : 0);
-export const isPast = (s: string | null | undefined) => !!s && !Number.isNaN(new Date(s).getTime()) && new Date(s).getTime() < Date.now();
-export const isFuture = (s: string | null | undefined) => !!s && !Number.isNaN(new Date(s).getTime()) && new Date(s).getTime() > Date.now();
+export const isPast = (s: string | null | undefined) => !!s && !!toDate(s) && toDate(s)!.getTime() < Date.now();
+export const isFuture = (s: string | null | undefined) => !!s && !!toDate(s) && toDate(s)!.getTime() > Date.now();
 export const pkgActive = (k: ZenotiPackage) => {
   const status = String(k.status ?? "").toLowerCase();
   return (status === "1" || status === "active") && num(k.sessionsRemaining) > 0 && (k.neverExpires || !k.endDate || isFuture(k.endDate));
@@ -197,7 +193,7 @@ export function ZenotiList({ kind, embedded }: { kind: Kind; embedded?: boolean 
     if (kind === "packages" || kind === "memberships") base.status = status;
     if (kind === "appointments") {
       if (when === "upcoming") base.upcoming = 1;
-      if (when === "past") base.to = new Date().toISOString();
+      if (when === "past") base.to = isoDay();
     }
     return api.zenoti[kind](base) as Promise<ZenotiListEnvelope>;
   }, [kind, page, debounced, branchId, status, when]);

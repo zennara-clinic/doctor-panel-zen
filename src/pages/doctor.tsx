@@ -10,8 +10,9 @@ import api from "../lib/api";
 import { useApi, useDebounced } from "../lib/useApi";
 import { useMyDoctor } from "../lib/useMe";
 import {
-  ageFrom, bookingServiceName, bookingSlotLabel, fmtAgo, fmtDate, fmtDateFull, fmtINR, fmtWhen, idOf, initials, isoDay,
-  nameOf, pct, patientFlags, statusKey,
+  addClinicDays, ageFrom, bookingServiceName, bookingSlotDate, bookingSlotLabel, clinicMonthEnd, clinicMonthStart,
+  clinicWeekday, dayKeyDate, fmtAgo, fmtDate, fmtDateFull, fmtDayKey, fmtINR, fmtWhen, idOf, initials,
+  isoDay, nameOf, pct, patientFlags, statusKey,
 } from "../lib/format";
 import { STATUS } from "../ui";
 import type { Booking, Consultation, Doctor, Package, PreConsultForm, PrescriptionItem } from "../lib/types";
@@ -43,12 +44,21 @@ export function MyDay() {
   const { admin } = useStore();
   const me = useMyDoctor();
   const [day, setDay] = useState(isoDay());
+  const liveDay = useRef(isoDay());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const current = isoDay();
+      setDay((selected) => selected === liveDay.current ? current : selected);
+      liveDay.current = current;
+    }, 60000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const bookings = useMyBookings(me.data, day);
   const monthRange = useMemo(() => {
-    const from = new Date(); from.setDate(1);
-    const to = new Date(from.getFullYear(), from.getMonth() + 1, 0);
-    return { startDate: isoDay(from), endDate: isoDay(to) };
+    const today = isoDay();
+    return { startDate: clinicMonthStart(today), endDate: clinicMonthEnd(today) };
   }, []);
   const month = useMyBookings(me.data, undefined, monthRange);
 
@@ -887,32 +897,35 @@ export function MyMonth() {
 
   const q = useApi(async () => {
     if (!me.data) return null;
-    const from = new Date(); from.setMonth(from.getMonth() - 1, 1); from.setHours(0, 0, 0, 0);
-    const res = await api.bookings.list({ specialistId: me.data.doctorId, startDate: isoDay(from) });
+    const today = isoDay();
+    const currentStart = clinicMonthStart(today);
+    const previousEnd = addClinicDays(currentStart, -1);
+    const previousStart = clinicMonthStart(previousEnd);
+    const res = await api.bookings.list({ specialistId: me.data.doctorId, startDate: previousStart });
     const mine = (res.data ?? []).filter(
       (b) => !b.specialistId || b.specialistId === me.data!.doctorId || b.specialistName === me.data!.name,
     );
 
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-
-    const inMonth = mine.filter((b) => new Date(b.preferredDate) >= monthStart);
+    const inMonth = mine.filter((b) => isoDay(new Date(b.confirmedDate || b.preferredDate)) >= currentStart);
     const prevMonth = mine.filter((b) => {
-      const d = new Date(b.preferredDate);
-      return d >= prevStart && d < monthStart;
+      const day = isoDay(new Date(b.confirmedDate || b.preferredDate));
+      return day >= previousStart && day < currentStart;
     });
 
     // 12-month trend of completed consultations.
     const trend: { label: string; count: number }[] = [];
     for (let i = 11; i >= 0; i--) {
-      const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+      const startDate = dayKeyDate(currentStart);
+      startDate.setUTCMonth(startDate.getUTCMonth() - i, 1);
+      const start = isoDay(startDate);
+      const endDate = new Date(startDate);
+      endDate.setUTCMonth(endDate.getUTCMonth() + 1, 1);
+      const end = isoDay(endDate);
       trend.push({
-        label: start.toLocaleString("en-GB", { month: "short" }),
+        label: fmtDayKey(start, { month: "short" }),
         count: mine.filter((b) => {
-          const d = new Date(b.preferredDate);
-          return d >= start && d < end && b.status === "Completed";
+          const day = isoDay(new Date(b.confirmedDate || b.preferredDate));
+          return day >= start && day < end && b.status === "Completed";
         }).length,
       });
     }
@@ -927,21 +940,21 @@ export function MyMonth() {
     const byWeekday = [0, 0, 0, 0, 0, 0, 0];
     const byStatus = new Map<string, number>();
     for (const b of inMonth) {
-      byWeekday[new Date(b.confirmedDate || b.preferredDate).getDay()] += 1;
+      byWeekday[clinicWeekday(isoDay(new Date(b.confirmedDate || b.preferredDate)))] += 1;
       byStatus.set(b.status, (byStatus.get(b.status) ?? 0) + 1);
     }
 
     const notes = await api.consultationNotes.list({ doctorId: me.data.doctorId, limit: 300 })
       .then((r) => r.data ?? []).catch(() => []);
     const assignedFromNotes = notes.filter(
-      (n) => (n.assignedServices ?? []).length > 0 && new Date(n.createdAt ?? 0) >= monthStart,
+      (n) => (n.assignedServices ?? []).length > 0 && isoDay(new Date(n.createdAt ?? 0)) >= currentStart,
     ).length;
 
     return { mine, inMonth, prevMonth, trend, byService, byWeekday, byStatus, notes, assignedFromNotes };
   }, [me.data?._id]);
 
   return (
-    <Page title="My month" sub={me.data ? `${me.data.name} · ${new Date().toLocaleString("en-GB", { month: "long", year: "numeric" })}` : ""}>
+    <Page title="My month" sub={me.data ? `${me.data.name} · ${fmtDayKey(isoDay(), { month: "long", year: "numeric" })}` : ""}>
       <Async q={me} label="Loading your profile…" rows={3}>
         {(doctor) => !doctor ? <NoProfile email={admin?.email} /> : (
           <Async q={q} label="Adding up your month…" rows={5}>
@@ -1014,7 +1027,7 @@ export function Availability() {
     const res = await api.bookings.list({ specialistId: me.data.doctorId, startDate: isoDay() });
     return (res.data ?? []).filter(
       (b) => (!b.specialistId || b.specialistId === me.data!.doctorId || b.specialistName === me.data!.name)
-        && new Date(b.confirmedDate || b.preferredDate).getTime() >= Date.now()
+        && (bookingSlotDate(b)?.getTime() ?? 0) >= Date.now()
         && !["Cancelled", "Completed", "No Show"].includes(b.status),
     );
   }, [me.data?._id]);

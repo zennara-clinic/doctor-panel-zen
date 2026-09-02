@@ -6,6 +6,7 @@ import { Async, B, Btn, Card, Empty, Note, Page, SecH, Switch, Tag } from "../ui
 import { useStore } from "../store";
 import type { ScheduleOverride, TimeRange, WeeklyBlock } from "../lib/types";
 import { SESSION_SLOT_MINUTES } from "../lib/scheduling";
+import { clinicMonthEnd, clinicMonthStart, dayKeyDate, fmtDayKey, isoDay } from "../lib/format";
 
 /**
  * A dermatologist's booking calendar.
@@ -28,20 +29,16 @@ const DAY_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
 const SEL = "w-full rounded-lg border border-border bg-ivory px-2.5 py-2 text-[13px] outline-none focus:border-gold-dark disabled:text-ink3";
 const SEL_SM = "rounded-lg border border-border bg-ivory px-2 py-1 text-[11px] outline-none focus:border-gold-dark";
 
-/** "2026-08-14" for a Date, in local time — never toISOString(). */
+/** "2026-08-14" for a calendar Date, independent of browser timezone. */
 function key(d: Date) {
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${m}-${day}`;
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${m}-${day}`;
 }
 
-function fromKey(k: string) {
-  const [y, m, d] = k.split("-").map(Number);
-  return new Date(y, m - 1, d);
-}
+const fromKey = dayKeyDate;
 
-const prettyDate = (k: string) =>
-  fromKey(k).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
+const prettyDate = (k: string) => fmtDayKey(k, { weekday: "long", day: "numeric", month: "long" });
 
 /* -------------------------------------------------------------------------
  * Time range editor — one row per block of clinic time
@@ -135,7 +132,7 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [month, setMonth] = useState(() => new Date());
+  const [month, setMonth] = useState(() => dayKeyDate(isoDay()));
   const [openDate, setOpenDate] = useState<string | null>(null);
 
   // The draft is seeded from the server on first render and owned locally
@@ -159,9 +156,8 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
 
   /** Free/booked counts for the month on screen. */
   const monthRange = useMemo(() => {
-    const first = new Date(month.getFullYear(), month.getMonth(), 1);
-    const last = new Date(month.getFullYear(), month.getMonth() + 1, 0);
-    return { from: key(first), to: key(last) };
+    const current = key(month);
+    return { from: clinicMonthStart(current), to: clinicMonthEnd(current) };
   }, [month]);
 
   const days = useApi(
@@ -248,10 +244,10 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
 
   /** Leading blanks so the 1st lands under the right weekday. */
   const grid = useMemo(() => {
-    const first = new Date(month.getFullYear(), month.getMonth(), 1);
-    const total = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
-    const cells: (string | null)[] = Array(first.getDay()).fill(null);
-    for (let d = 1; d <= total; d++) cells.push(key(new Date(month.getFullYear(), month.getMonth(), d)));
+    const first = dayKeyDate(clinicMonthStart(key(month)));
+    const total = Number(clinicMonthEnd(key(month)).slice(-2));
+    const cells: (string | null)[] = Array(first.getUTCDay()).fill(null);
+    for (let d = 1; d <= total; d++) cells.push(key(new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth(), d, 12))));
     return cells;
   }, [month]);
 
@@ -388,13 +384,13 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                   <SecH t="Specific dates" em="· leave & one-off hours"
                     right={
                       <div className="flex items-center gap-1">
-                        <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}
+                        <button onClick={() => setMonth(new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() - 1, 1, 12)))}
                           aria-label="Previous month"
                           className="grid h-7 w-7 place-items-center rounded-lg text-ink3 hover:bg-ivory hover:text-ink">‹</button>
                         <span className="w-32 text-center text-[12px] font-bold">
-                          {month.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}
+                          {fmtDayKey(key(month), { month: "long", year: "numeric" })}
                         </span>
-                        <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}
+                        <button onClick={() => setMonth(new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() + 1, 1, 12)))}
                           aria-label="Next month"
                           className="grid h-7 w-7 place-items-center rounded-lg text-ink3 hover:bg-ivory hover:text-ink">›</button>
                       </div>
@@ -420,7 +416,7 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                             openDate === k ? "border-gold-dark bg-cream font-bold" : "border-transparent hover:border-border",
                             isOff ? "text-err line-through" : free > 0 ? "text-ink" : "text-ink3",
                           ].join(" ")}>
-                          {fromKey(k).getDate()}
+                          {fromKey(k).getUTCDate()}
                           {/* Free count, so a day that looks open but is fully
                               booked is distinguishable at a glance. */}
                           {!isOff && info && info.total > 0 && (

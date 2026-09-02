@@ -14,19 +14,20 @@ import { useQueryNumber, useQueryPage, useQueryString } from "../lib/useListStat
 import {
   ageFrom, bookingProvider, bookingServiceName, bookingSlotDate, bookingSlotLabel, bookingSource, fmtAgo, fmtCompactINR,
   fmtDate, fmtDateFull, fmtINR, fmtWhen, idOf, initials, isoDay, isVip, nameOf, patientFlags, pct,
-  statusKey, mapToRows, isConsultationBooking, clinicHM,
+  statusKey, mapToRows, isConsultationBooking, clinicHM, addClinicDays, clinicMonthEnd,
+  clinicMonthStart, clinicWeekday, dayKeyDate, fmtDayKey,
 } from "../lib/format";
 import type { Booking, Branch, Chat as ChatThread, ChatMessage, Consultation, Doctor, ProductOrder, User } from "../lib/types";
 
 /* ================= OVERVIEW ================= */
 const RANGE_PRESETS: [string, () => { startDate: string; endDate: string }][] = [
-  ["Today", () => ({ startDate: isoDay(new Date()), endDate: isoDay(new Date()) })],
-  ["Last 7 days", () => { const e = new Date(); const s = new Date(); s.setDate(e.getDate() - 6); return { startDate: isoDay(s), endDate: isoDay(e) }; }],
-  ["Last 30 days", () => { const e = new Date(); const s = new Date(); s.setDate(e.getDate() - 29); return { startDate: isoDay(s), endDate: isoDay(e) }; }],
-  ["This month", () => { const e = new Date(); return { startDate: isoDay(new Date(e.getFullYear(), e.getMonth(), 1)), endDate: isoDay(e) }; }],
-  ["Last month", () => { const n = new Date(); return { startDate: isoDay(new Date(n.getFullYear(), n.getMonth() - 1, 1)), endDate: isoDay(new Date(n.getFullYear(), n.getMonth(), 0)) }; }],
-  ["Last 90 days", () => { const e = new Date(); const s = new Date(); s.setDate(e.getDate() - 89); return { startDate: isoDay(s), endDate: isoDay(e) }; }],
-  ["This year", () => { const e = new Date(); return { startDate: isoDay(new Date(e.getFullYear(), 0, 1)), endDate: isoDay(e) }; }],
+  ["Today", () => { const e = isoDay(); return { startDate: e, endDate: e }; }],
+  ["Last 7 days", () => { const e = isoDay(); return { startDate: addClinicDays(e, -6), endDate: e }; }],
+  ["Last 30 days", () => { const e = isoDay(); return { startDate: addClinicDays(e, -29), endDate: e }; }],
+  ["This month", () => { const e = isoDay(); return { startDate: clinicMonthStart(e), endDate: e }; }],
+  ["Last month", () => { const e = addClinicDays(clinicMonthStart(isoDay()), -1); return { startDate: clinicMonthStart(e), endDate: clinicMonthEnd(e) }; }],
+  ["Last 90 days", () => { const e = isoDay(); return { startDate: addClinicDays(e, -89), endDate: e }; }],
+  ["This year", () => { const e = isoDay(); return { startDate: `${e.slice(0, 4)}-01-01`, endDate: e }; }],
 ];
 
 export function Overview() {
@@ -42,7 +43,7 @@ export function Overview() {
 
   const streamRows = (d?.revenue.streams ?? []).map((s) => [s.label, s.revenue, `${s.count} · app ${fmtCompactINR(s.app)}${s.clinic ? ` · clinic ${fmtCompactINR(s.clinic)}` : ""}`] as [string, number, string]);
   const dailyPts = d?.daily.map((x) => x.total) ?? [];
-  const dailyLabels = d?.daily.map((x) => new Date(x.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })) ?? [];
+  const dailyLabels = d?.daily.map((x) => fmtDayKey(String(x.date).slice(0, 10), { day: "numeric", month: "short" })) ?? [];
   const byKind = d ? [
     { n: "Consultations", v: d.daily.map((x) => x.consultations) },
     { n: "Treatments", v: d.daily.map((x) => x.treatments) },
@@ -742,21 +743,22 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
 }
 
 /* ================= TODAY ================= */
-/** Half-hour rows between the centre's opening and closing time on that day. */
+/** One-hour rows whose complete session fits inside the centre's hours. */
 function slotTimesFor(hours: Branch["operatingHours"] | undefined, day: string): string[] {
-  const weekday = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][new Date(day).getDay()];
+  const weekday = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][clinicWeekday(day)];
   const h = hours?.[weekday] as { open?: string; openTime?: string; close?: string; closeTime?: string; isOpen?: boolean } | undefined;
   const open = h?.open ?? h?.openTime ?? "09:00";
   const close = h?.close ?? h?.closeTime ?? "19:00";
   const toMin = (t: string) => { const [a, b] = t.split(":").map(Number); return a * 60 + (b || 0); };
   const out: string[] = [];
-  for (let m = toMin(open); m <= toMin(close); m += 30) out.push(`${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`);
+  for (let m = toMin(open); m + 60 <= toMin(close); m += 60) out.push(`${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`);
   return out.length ? out : ["09:00"];
 }
 
 export function Today() {
   const { branch, branchId, branches } = useStore();
   const [day, setDay] = useState(isoDay());
+  const liveDay = useRef(isoDay());
   const [view, setView] = useState<"day" | "list">("day");
   const [newOpen, setNewOpen] = useState(false);
   const [sel, setSel] = useState<string | null>(null);
@@ -764,6 +766,17 @@ export function Today() {
   const [provF, setProvF] = useState("All dermatologists");
   const [stF, setStF] = useState("All statuses");
   const [kind, setKind] = useQueryString("kind", "");
+
+  // Follow the clinic calendar across midnight unless staff deliberately
+  // selected another day in the date control.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const current = isoDay();
+      setDay((selected) => selected === liveDay.current ? current : selected);
+      liveDay.current = current;
+    }, 60000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const bookingsQ = useApi(
     () => api.bookings.list({ date: day, location: branch && branch !== "All branches" ? branch : undefined }),
@@ -976,8 +989,8 @@ function bookingQuery(f: BookingFilters): Record<string, string | number> {
 }
 
 const isoOf = (d: Date) => isoDay(d);
-const startOfWeek = (d: Date) => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; }; // Monday
-const addDays = (d: Date, n: number) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const startOfWeek = (d: Date) => { const x = new Date(d); x.setUTCDate(x.getUTCDate() - ((x.getUTCDay() + 6) % 7)); return x; }; // Monday
+const addDays = (d: Date, n: number) => { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; };
 
 export function Bookings() {
   const { branch, branches } = useStore();
@@ -991,7 +1004,7 @@ export function Bookings() {
   const [viewParam, setView] = useQueryString("view", "list");
   const view: "list" | "week" | "month" = viewParam === "week" ? "week" : viewParam === "month" ? "month" : "list";
   const [anchorParam, setAnchor] = useQueryString("at", "");
-  const anchor = useMemo(() => { const d = anchorParam ? new Date(anchorParam) : new Date(); return Number.isNaN(d.getTime()) ? new Date() : d; }, [anchorParam]);
+  const anchor = useMemo(() => dayKeyDate(/^\d{4}-\d{2}-\d{2}$/.test(anchorParam) ? anchorParam : isoDay()), [anchorParam]);
   const scope: "branch" | "all" = scopeParam === "all" ? "all" : "branch";
   const debounced = useDebounced(search);
   const [kindParam, setKindParam] = useQueryString("kind", "");
@@ -1032,7 +1045,7 @@ export function Bookings() {
   // Calendar views pin the date range to the visible week/month.
   const calRange = useMemo(() => {
     if (view === "week") { const s = startOfWeek(anchor); return { from: isoOf(s), to: isoOf(addDays(s, 6)) }; }
-    if (view === "month") { const s = new Date(anchor.getFullYear(), anchor.getMonth(), 1); const e = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0); return { from: isoOf(s), to: isoOf(e) }; }
+    if (view === "month") { const key = isoOf(anchor); return { from: clinicMonthStart(key), to: clinicMonthEnd(key) }; }
     return null;
   }, [view, anchor]);
 
@@ -1078,10 +1091,12 @@ export function Bookings() {
   const kindLabel = applied.kind === "consultation" ? "Dermatologist consultations" : applied.kind === "treatment" ? "Treatments" : "All services";
   const sortLabel = BOOKING_SORTS.find(([v]) => v === applied.sortBy)?.[1] ?? "Appointment date";
   const fmtAnchor = view === "week"
-    ? `${startOfWeek(anchor).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} – ${addDays(startOfWeek(anchor), 6).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`
-    : anchor.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+    ? `${fmtDayKey(isoOf(startOfWeek(anchor)), { day: "numeric", month: "short" })} – ${fmtDayKey(isoOf(addDays(startOfWeek(anchor), 6)), { day: "numeric", month: "short", year: "numeric" })}`
+    : fmtDayKey(isoOf(anchor), { month: "long", year: "numeric" });
   const shift = (n: number) => {
-    const d = view === "week" ? addDays(anchor, 7 * n) : new Date(anchor.getFullYear(), anchor.getMonth() + n, 1);
+    const d = new Date(anchor);
+    if (view === "week") d.setUTCDate(d.getUTCDate() + 7 * n);
+    else d.setUTCMonth(d.getUTCMonth() + n, 1);
     setAnchor(isoOf(d));
   };
 
@@ -1185,8 +1200,8 @@ export function Bookings() {
               return (
                 <div key={k} className={`min-h-[320px] rounded-lg border p-1.5 ${k === todayIso ? "border-gold bg-gold/5" : "border-border bg-ivory/60"}`}>
                   <div className="mb-1.5 flex items-baseline justify-between px-0.5">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-ink3">{d.toLocaleDateString("en-IN", { weekday: "short" })}</span>
-                    <span className={`text-[13px] font-bold ${k === todayIso ? "text-gold-dark" : ""}`}>{d.getDate()}</span>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-ink3">{fmtDayKey(k, { weekday: "short" })}</span>
+                    <span className={`text-[13px] font-bold ${k === todayIso ? "text-gold-dark" : ""}`}>{d.getUTCDate()}</span>
                   </div>
                   <div className="flex flex-col gap-1">{list.map(calendarCell)}</div>
                   {list.length === 0 && <div className="px-0.5 text-[10.5px] text-ink3">—</div>}
@@ -1196,7 +1211,7 @@ export function Bookings() {
           </div>
         ) : (
           (() => {
-            const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+            const first = dayKeyDate(clinicMonthStart(isoOf(anchor)));
             const gridStart = startOfWeek(first);
             const cells = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
             return (
@@ -1206,11 +1221,11 @@ export function Bookings() {
                 </div>
                 <div className="grid grid-cols-7 gap-1">
                   {cells.map((d) => {
-                    const k = isoOf(d); const list = byDay.get(k) ?? []; const inMonth = d.getMonth() === anchor.getMonth();
+                    const k = isoOf(d); const list = byDay.get(k) ?? []; const inMonth = d.getUTCMonth() === anchor.getUTCMonth();
                     return (
                       <div key={k} className={`min-h-[96px] rounded-lg border p-1 ${k === todayIso ? "border-gold bg-gold/5" : "border-border"} ${inMonth ? "bg-surface" : "bg-ivory/40 opacity-60"}`}>
                         <div className="flex items-center justify-between px-0.5">
-                          <span className={`text-[11.5px] font-bold ${k === todayIso ? "text-gold-dark" : ""}`}>{d.getDate()}</span>
+                          <span className={`text-[11.5px] font-bold ${k === todayIso ? "text-gold-dark" : ""}`}>{d.getUTCDate()}</span>
                           {list.length > 0 && (
                             <button onClick={() => { setView("week"); setAnchor(k); }} className="rounded-full bg-primary px-1.5 text-[10px] font-bold text-white">{list.length}</button>
                           )}

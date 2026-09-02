@@ -25,7 +25,14 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 export function toDate(v: string | Date | undefined | null): Date | null {
   if (!v) return null;
-  const d = v instanceof Date ? v : new Date(v);
+  let value: string | Date = v;
+  if (typeof v === "string") {
+    // Zenoti's wall-clock fields intentionally omit an offset. They are clinic
+    // time, not browser time. Date-only API values follow the same contract.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) value = `${v}T00:00:00+05:30`;
+    else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(v)) value = `${v}+05:30`;
+  }
+  const d = value instanceof Date ? value : new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
@@ -47,6 +54,44 @@ export function isoDay(d: Date = new Date()): string {
   const c = clinicParts(d);
   const p = (n: number) => String(n).padStart(2, "0");
   return `${c.y}-${p(c.m)}-${p(c.d)}`;
+}
+
+const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A Date used only for calendar arithmetic on a written clinic day.
+ * Noon UTC keeps the same day in every supported browser timezone; callers
+ * must use the UTC getters/setters on this value.
+ */
+export function dayKeyDate(key: string = isoDay()): Date {
+  if (!DAY_KEY_RE.test(key)) return dayKeyDate(isoDay());
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 12));
+}
+
+/** Add calendar days without letting the browser timezone change the result. */
+export function addClinicDays(key: string, amount: number): string {
+  const d = dayKeyDate(key);
+  d.setUTCDate(d.getUTCDate() + amount);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+export const clinicMonthStart = (key: string = isoDay()) => `${key.slice(0, 7)}-01`;
+export function clinicMonthEnd(key: string = isoDay()): string {
+  const d = dayKeyDate(clinicMonthStart(key));
+  d.setUTCMonth(d.getUTCMonth() + 1, 0);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+/** Weekday of a written clinic day (0 = Sunday), independent of the browser. */
+export const clinicWeekday = (key: string) => dayKeyDate(key).getUTCDay();
+
+/** Format a date-only key without interpreting it as a UTC or local instant. */
+export function fmtDayKey(
+  key: string,
+  options: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" },
+): string {
+  return new Intl.DateTimeFormat("en-IN", { ...options, timeZone: "UTC" }).format(dayKeyDate(key));
 }
 
 export const isSameDay = (a: Date | null, b: Date | null) => !!a && !!b && isoDay(a) === isoDay(b);
@@ -76,17 +121,13 @@ export function fmtTime(v: string | Date | undefined | null): string {
 export function fmtWhen(date: string | Date | undefined | null, time?: string | null): string {
   const d = toDate(date);
   if (!d) return time || "—";
-  const now = new Date();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-
-  const label = isSameDay(d, now)
+  const day = isoDay(d);
+  const today = isoDay();
+  const label = day === today
     ? "Today"
-    : isSameDay(d, tomorrow)
+    : day === addClinicDays(today, 1)
       ? "Tomorrow"
-      : isSameDay(d, yesterday)
+      : day === addClinicDays(today, -1)
         ? "Yesterday"
         : fmtDate(d);
   const c = clinicParts(d);
