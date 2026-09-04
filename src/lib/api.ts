@@ -26,29 +26,23 @@ export const auth = {
     requestRaw("/admin/auth/login", { method: "POST", body: { email }, anonymous: true }),
   resendOtp: (email: string) =>
     requestRaw("/admin/auth/resend-otp", { method: "POST", body: { email }, anonymous: true }),
-  /** Password sign-in for staff who were given one (dermatologists, therapists). */
-  loginPassword: (email: string, password: string) =>
-    request<{ token: string; admin: Admin; expiresAt: string }>("/admin/auth/login-password", {
-      method: "POST", body: { email, password }, anonymous: true,
-    }),
   verifyOtp: (email: string, otp: string) =>
     request<{ token: string; admin: Admin; expiresAt: string }>("/admin/auth/verify-otp", {
       method: "POST", body: { email, otp }, anonymous: true,
     }),
   me: () => request<Admin>("/admin/auth/me"),
   logout: () => requestRaw("/admin/auth/logout", { method: "POST" }),
+  /** End every session for this account, on every device. */
+  logoutEverywhere: () => requestRaw("/admin/auth/me/logout-all", { method: "POST" }),
   /** Remember that this account finished a walkthrough. */
   markTourSeen: (key: string) =>
     requestRaw("/admin/auth/me/tours", { method: "PUT", body: { key } }),
   /** "View tutorial again" — omit `key` to replay every tour. */
   resetTours: (key?: string) =>
     requestRaw(`/admin/auth/me/tours${key ? `?key=${encodeURIComponent(key)}` : ""}`, { method: "DELETE" }),
-  /** Change my own login email / phone. Changing the email needs the current password. */
+  /** Change my own login email / phone (the code is emailed to the new address next time). */
   updateContact: (body: { email?: string; phone?: string; currentPassword?: string }) =>
     request<Admin>("/admin/auth/me/contact", { method: "PUT", body }),
-  /** Change my own password (current password required once one is set). */
-  updatePassword: (currentPassword: string, newPassword: string) =>
-    requestRaw("/admin/auth/me/password", { method: "PUT", body: { currentPassword, newPassword } }),
 };
 
 /* ============================ branches ============================ */
@@ -273,7 +267,7 @@ export type DoctorStats = {
   recent: { _id: string; guest: string; userId?: string; service?: string | null; kind: "consultation" | "treatment"; date: string; time: string; status: string; amount: number; paymentStatus?: string; rating?: number | null; source?: string }[];
   feedback: { guest: string; rating: number; feedback: string; date: string }[];
 };
-export type DoctorAccount = { _id: Id; email: string; phone?: string | null; role: string; isActive: boolean; lastLogin?: string | null; hasPassword: boolean; passwordSetAt?: string | null; placeholderEmail: boolean };
+export type DoctorAccount = { _id: Id; email: string; phone?: string | null; role: string; isActive: boolean; lastLogin?: string | null; loginMethod: 'otp'; placeholderEmail: boolean };
 
 export const doctors = {
   list: (q?: Query) => requestRaw<Doctor[]>("/doctors", { query: q }),
@@ -284,8 +278,6 @@ export const doctors = {
   stats: (id: string, q?: Query) => request<DoctorStats>(`/doctors/${id}/stats`, { query: q }),
   /** Panel login behind the profile (admin only). */
   account: (id: string) => request<DoctorAccount | null>(`/doctors/${id}/account`),
-  setPassword: (id: string, password: string) => request<unknown>(`/doctors/${id}/account/password`, { method: "PUT", body: { password } }),
-  remove: (id: string) => requestRaw(`/doctors/${id}`, { method: "DELETE" }),
   toggle: (id: string) => request<Doctor>(`/doctors/${id}/toggle-status`, { method: "PATCH" }),
   /** The Doctor profile behind the signed-in staff login (role doctor). */
   me: () => requestRaw<Doctor | null>("/doctors/me") as Promise<Envelope<Doctor | null> & { linked?: boolean }>,

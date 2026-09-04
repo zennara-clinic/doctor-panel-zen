@@ -11,8 +11,6 @@ export type Admin = {
   name: string;
   role: AdminRole;
   phone?: string | null;
-  /** True once a password is set (from /admin/auth/me). */
-  hasPassword?: boolean;
   isActive: boolean;
   lastLogin?: string;
   /** Explicit link to a Doctor profile for role `doctor` logins. */

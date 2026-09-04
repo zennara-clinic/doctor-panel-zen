@@ -1353,25 +1353,17 @@ function ChipList({ label, em, values, onChange, placeholder }: {
 }
 
 /**
- * Login email, phone and password — the account, as distinct from the app card.
- * The clinic admin can change all of these too, from the dermatologist's page
- * in the admin panel; changes here need the current password where it matters.
+ * Login email and phone — the account, as distinct from the app card. There is
+ * no password: sign-in is a one-time code emailed to this address, so changing
+ * the address is what changes how you sign in.
  */
 function AccountSecurity() {
-  const { toast, admin } = useStore();
+  const { toast } = useStore();
   const acct = useApi(() => api.auth.me(), []);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [confirmPw, setConfirmPw] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
-  const [pwOpen, setPwOpen] = useState(false);
-  const [curPw, setCurPw] = useState("");
-  const [newPw, setNewPw] = useState("");
-  const [newPw2, setNewPw2] = useState("");
-  const [pwErr, setPwErr] = useState<string | null>(null);
-  const [pwBusy, setPwBusy] = useState(false);
 
   useEffect(() => {
     if (acct.data) { setEmail(acct.data.email); setPhone(acct.data.phone ?? ""); }
@@ -1382,77 +1374,26 @@ function AccountSecurity() {
 
   const save = async () => {
     if (!/^\S+@\S+\.\S+$/.test(email.trim())) { setErr("Enter a valid email address"); return; }
-    if (emailChanged && acct.data?.hasPassword && !confirmPw) { setErr("Enter your current password to change the email"); return; }
     setBusy(true); setErr(null);
     try {
-      const r = await api.auth.updateContact({
-        email: email.trim().toLowerCase(),
-        phone: phone.trim(),
-        ...(emailChanged ? { currentPassword: confirmPw } : {}),
-      });
-      toast(emailChanged ? `Saved — you now sign in as ${r.email}` : "Saved");
-      setConfirmPw("");
+      const r = await api.auth.updateContact({ email: email.trim().toLowerCase(), phone: phone.trim() });
+      toast(emailChanged ? `Saved — sign-in codes now go to ${r.email}` : "Saved");
       acct.reload();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
-  };
-
-  const changePassword = async () => {
-    if (newPw.length < 8) { setPwErr("The new password must be at least 8 characters"); return; }
-    if (newPw !== newPw2) { setPwErr("The passwords don't match"); return; }
-    setPwBusy(true); setPwErr(null);
-    try {
-      await api.auth.updatePassword(curPw, newPw);
-      toast("Password changed");
-      setPwOpen(false); setCurPw(""); setNewPw(""); setNewPw2("");
-      acct.reload();
-    } catch (e) { setPwErr((e as Error).message); } finally { setPwBusy(false); }
   };
 
   return (
     <Card className="grid gap-2.5 p-3.5">
       <In label="Login email" type="email" value={email} onChange={setEmail}
-        hint="You sign in to this panel with this address" />
+        hint="Your sign-in code is emailed to this address" />
       <In label="Phone" value={phone} onChange={setPhone} hint="Staff contact only — never shown in the app" />
-      {emailChanged && acct.data?.hasPassword && (
-        <In label="Current password" type="password" value={confirmPw} onChange={setConfirmPw}
-          hint="Required to change your sign-in email" />
-      )}
       {(emailChanged || phoneChanged) && (
         <Btn disabled={busy} onClick={save}>{busy ? "Saving…" : "Save changes"}</Btn>
       )}
-      <div className="flex items-center justify-between rounded-xl border border-border bg-ivory px-3.5 py-2.5">
-        <div>
-          <div className="text-[12.5px] font-bold">Password</div>
-          <div className="text-[11px] text-ink3">
-            {acct.data?.hasPassword ? "Set — you sign in with it" : "Not set yet — ask the clinic admin for one"}
-          </div>
-        </div>
-        <Btn kind="ghost" onClick={() => { setCurPw(""); setNewPw(""); setNewPw2(""); setPwErr(null); setPwOpen(true); }}>
-          Change
-        </Btn>
+      <div className="rounded-xl border border-border bg-ivory px-3.5 py-2.5 text-[11px] text-ink3">
+        You sign in with a 6-digit code sent to your email each time. There is no password to remember or reset.
       </div>
       {err && <Note kind="crit" className="mb-0">{err}</Note>}
-
-      <Modal open={pwOpen} onClose={() => setPwOpen(false)} title="Change my password">
-        <div className="grid gap-2.5">
-          {acct.data?.hasPassword && (
-            <In label="Current password" type="password" value={curPw} onChange={setCurPw} />
-          )}
-          <In label="New password" type="password" value={newPw} onChange={setNewPw} hint="At least 8 characters" />
-          <In label="Confirm new password" type="password" value={newPw2} onChange={setNewPw2} />
-          {pwErr && <Note kind="crit" className="mb-0">{pwErr}</Note>}
-          <div className="flex justify-end gap-2">
-            <Btn kind="ghost" onClick={() => setPwOpen(false)}>Cancel</Btn>
-            <Btn disabled={pwBusy || !newPw || !newPw2 || (!!acct.data?.hasPassword && !curPw)} onClick={changePassword}>
-              {pwBusy ? "Saving…" : "Change password"}
-            </Btn>
-          </div>
-          <Note className="mb-0 text-[11.5px]">
-            Signed in as <B>{admin?.email}</B>. Forgot your current password? The clinic admin can reset it
-            from your page in the admin panel.
-          </Note>
-        </div>
-      </Modal>
     </Card>
   );
 }

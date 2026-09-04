@@ -300,35 +300,59 @@ const SLIDES = [
   { icon: "cal", title: "Your schedule drives everything", lines: ["Set your usual week once", "Mark leave on specific dates", "The app and reception follow it"] },
 ];
 
-/**
- * Dermatologists sign in with email + password only — the backend refuses
- * emailed codes for doctor accounts. Passwords are set by the clinic admin
- * (from the dermatologist's page) and can be changed from My profile here.
- */
 function LoginPage({ onSignedIn }: { onSignedIn: (token: string, admin: Admin, expiresAt?: string) => void }) {
   const [slide, setSlide] = useState(0);
+  const [step, setStep] = useState<"email" | "otp">("email");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [cooldown, setCooldown] = useState(0);
 
   useEffect(() => {
     const t = setInterval(() => setSlide((x) => (x + 1) % SLIDES.length), 4200);
     return () => clearInterval(t);
   }, []);
 
-  const signIn = async () => {
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
+  const fail = (err: unknown) =>
+    setError(err instanceof ApiError ? err.message : (err as Error)?.message ?? "Something went wrong");
+
+  const sendOtp = async () => {
     const addr = email.trim().toLowerCase();
     if (!/^\S+@\S+\.\S+$/.test(addr)) { setError("Enter a valid email address"); return; }
-    if (!password) { setError("Enter your password"); return; }
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      await api.auth.requestOtp(addr);
+      setStep("otp");
+      setCooldown(30);
+      setNotice(`We emailed a 6-digit code to ${addr}.`);
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const resend = async () => {
     setBusy(true); setError(null);
     try {
-      const r = await api.auth.loginPassword(addr, password);
-      if (!panelAccepts(r.admin.role)) { setError(wrongPanelMessage(r.admin.role)); return; }
-      onSignedIn(r.token, r.admin, r.expiresAt);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : (err as Error)?.message ?? "Something went wrong");
-    } finally { setBusy(false); }
+      await api.auth.resendOtp(email.trim().toLowerCase());
+      setCooldown(30);
+      setNotice("A new code is on its way.");
+    } catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  const verify = async () => {
+    if (otp.length !== 6) { setError("The code is 6 digits"); return; }
+    setBusy(true); setError(null);
+    try {
+      const res = await api.auth.verifyOtp(email.trim().toLowerCase(), otp);
+      if (!panelAccepts(res.admin.role)) { setError(wrongPanelMessage(res.admin.role)); setOtp(""); return; }
+      onSignedIn(res.token, res.admin, res.expiresAt);
+    } catch (err) { fail(err); setOtp(""); } finally { setBusy(false); }
   };
 
   const sl = SLIDES[slide];
@@ -376,36 +400,60 @@ function LoginPage({ onSignedIn }: { onSignedIn: (token: string, admin: Admin, e
             </span>
             <div>
               <h1 className="text-[22px] font-extrabold leading-tight tracking-tight">Zennara Dermatologist</h1>
-              <div className="text-[12.5px] text-ink3">Sign in with your email and password</div>
+              <div className="text-[12.5px] text-ink3">
+                {step === "email" ? "Sign in with your email — we send a code" : "Enter the code we emailed you"}
+              </div>
             </div>
           </div>
 
           <div className="grid gap-3 rounded-2xl border border-border bg-surface p-5 shadow-[0_4px_16px_rgba(3,47,34,0.05)]">
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-bold text-ink2" htmlFor="login-email">Email</label>
-              <input id="login-email" autoFocus value={email} type="email" autoComplete="email"
-                onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !busy && signIn()}
-                placeholder="you@zennara.in"
-                className="rounded-lg border border-border bg-ivory px-3 py-2.5 text-[13.5px] outline-none focus:border-gold-dark" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-bold text-ink2" htmlFor="login-password">Password</label>
-              <input id="login-password" value={password} type="password" autoComplete="current-password"
-                onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !busy && signIn()}
-                placeholder="••••••••"
-                className="rounded-lg border border-border bg-ivory px-3 py-2.5 text-[13.5px] outline-none focus:border-gold-dark" />
-            </div>
-            <button onClick={signIn} disabled={busy}
-              className="mt-1 flex items-center justify-center gap-2 rounded-(--radius-btn) bg-primary py-3 text-[14px] font-bold text-white transition-colors hover:bg-primary-hover disabled:bg-dis-bg disabled:text-dis">
-              {busy && <Loader2 className="h-4 w-4 animate-spin" />} Sign in
-            </button>
+            {step === "email" ? (
+              <>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-bold text-ink2" htmlFor="login-email">Email</label>
+                  <input id="login-email" autoFocus value={email} type="email" autoComplete="email"
+                    onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !busy && sendOtp()}
+                    placeholder="you@zennara.in"
+                    className="rounded-lg border border-border bg-ivory px-3 py-2.5 text-[13.5px] outline-none focus:border-gold-dark" />
+                </div>
+                <button onClick={sendOtp} disabled={busy}
+                  className="mt-1 flex items-center justify-center gap-2 rounded-(--radius-btn) bg-primary py-3 text-[14px] font-bold text-white transition-colors hover:bg-primary-hover disabled:bg-dis-bg disabled:text-dis">
+                  {busy && <Loader2 className="h-4 w-4 animate-spin" />} Send code
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-bold text-ink2" htmlFor="login-otp">6-digit code</label>
+                  <input id="login-otp" autoFocus value={otp} inputMode="numeric" maxLength={6} autoComplete="one-time-code"
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+                    onKeyDown={(e) => e.key === "Enter" && !busy && verify()}
+                    placeholder="••••••"
+                    className="rounded-xl border-2 border-border bg-ivory px-4 py-3 text-center font-mono text-[22px] font-bold tracking-[0.5em] outline-none focus:border-gold-dark" />
+                </div>
+                <button onClick={verify} disabled={busy || otp.length !== 6}
+                  className="mt-1 flex items-center justify-center gap-2 rounded-(--radius-btn) bg-primary py-3 text-[14px] font-bold text-white transition-colors hover:bg-primary-hover disabled:bg-dis-bg disabled:text-dis">
+                  {busy && <Loader2 className="h-4 w-4 animate-spin" />} Verify &amp; sign in
+                </button>
+                <div className="flex items-center justify-between text-[12px]">
+                  <button className="font-semibold text-ink3 hover:text-ink"
+                    onClick={() => { setStep("email"); setOtp(""); setError(null); setNotice(null); }}>
+                    ← Change email
+                  </button>
+                  <button className="font-semibold text-primary disabled:text-dis" disabled={busy || cooldown > 0} onClick={resend}>
+                    {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
+                  </button>
+                </div>
+              </>
+            )}
 
+            {notice && !error && <div className="rounded-lg bg-ok-bg px-3 py-2 text-[12px] text-ok">{notice}</div>}
             {error && <div className="rounded-lg bg-err-bg px-3 py-2 text-[12px] font-semibold text-err">{error}</div>}
           </div>
 
           <p className="mt-4 text-center text-[11.5px] leading-relaxed text-ink3">
             This panel is for dermatologist accounts.<br />
-            No password yet, or forgotten it? The clinic admin sets and resets it from your page.
+            A 6-digit code is emailed to you each time you sign in — there is no password.
           </p>
         </div>
       </div>
