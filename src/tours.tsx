@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import Joyride, { STATUS, type Step, type CallBackProps } from "react-joyride";
 import { useStore } from "./store";
+import { api } from "./lib/api";
 
 const styles = {
   options: {
@@ -49,17 +50,47 @@ const MODULE_TOURS: Record<string, { key: string; steps: Step[] }> = {
   },
 };
 
+/**
+ * A tour is "seen" when the account has completed it — the list lives on the
+ * Admin record (`toursSeen`), not in localStorage, so switching browser or
+ * clearing site data no longer replays the first-login walkthrough. The local
+ * key is still written as a same-session cache so a slow /me round-trip can't
+ * flash the tour a second time.
+ */
+const REPLAY_EVENT = "zennara:replay-tour";
+
+/** Ask the Tours component to run the panel walkthrough again. */
+export function replayTour() {
+  window.dispatchEvent(new CustomEvent(REPLAY_EVENT));
+}
+
 export function Tours() {
-  const { role, loggedIn } = useStore();
+  const { role, loggedIn, admin } = useStore();
   const loc = useLocation();
   const [run, setRun] = useState(false);
   const [steps, setSteps] = useState<Step[]>([]);
   const [tourKey, setTourKey] = useState("");
+  const seen = (key: string) =>
+    (admin?.toursSeen ?? []).includes(key) || Boolean(localStorage.getItem(key));
+
+  // "View tutorial again" from the profile menu.
+  useEffect(() => {
+    const onReplay = () => {
+      const panelKey = `tour-${role}`;
+      localStorage.removeItem(panelKey);
+      api.auth.resetTours().catch(() => undefined);
+      setSteps(PANEL_TOURS[role] ?? []);
+      setTourKey(panelKey);
+      setRun(true);
+    };
+    window.addEventListener(REPLAY_EVENT, onReplay);
+    return () => window.removeEventListener(REPLAY_EVENT, onReplay);
+  }, [role]);
 
   useEffect(() => {
     if (!loggedIn) { setRun(false); return; }
     const panelKey = `tour-${role}`;
-    if (!localStorage.getItem(panelKey)) {
+    if (!seen(panelKey)) {
       setSteps(PANEL_TOURS[role] ?? []); setTourKey(panelKey);
       const t = setTimeout(() => setRun(true), 600);
       return () => clearTimeout(t);
@@ -67,17 +98,21 @@ export function Tours() {
     const mod = MODULE_TOURS[loc.pathname];
     // The consultation tour points at the open-consult screen, not the guest picker.
     const consultWithoutGuest = loc.pathname === "/doctor/consultation" && !(loc.state as { bookingId?: string } | null)?.bookingId;
-    if (mod && !consultWithoutGuest && !localStorage.getItem(mod.key)) {
+    if (mod && !consultWithoutGuest && !seen(mod.key)) {
       setSteps(mod.steps); setTourKey(mod.key);
       const t = setTimeout(() => setRun(true), 600);
       return () => clearTimeout(t);
     }
     setRun(false);
-  }, [role, loggedIn, loc.pathname]);
+  }, [role, loggedIn, loc.pathname, admin?.toursSeen]);
 
   const cb = (data: CallBackProps) => {
     if (data.status === STATUS.FINISHED || data.status === STATUS.SKIPPED) {
-      if (tourKey) localStorage.setItem(tourKey, "1");
+      if (tourKey) {
+        localStorage.setItem(tourKey, "1");
+        // Persist against the account so this never replays on another device.
+        api.auth.markTourSeen(tourKey).catch(() => undefined);
+      }
       setRun(false);
     }
   };

@@ -4,7 +4,7 @@ import { Shell, HOME } from "./shell";
 import { Tours } from "./tours";
 import { ErrorBoundary } from "./lib/ErrorBoundary";
 import { PatientDetail } from "./pages/reception";
-import { MyDay, Consult, MyPatients, MyMonth, Availability, DoctorProfile } from "./pages/doctor";
+import { MyDay, Consult, MyPatients, MyMonth, Availability, DoctorProfile, ProductStock } from "./pages/doctor";
 import { Schedule } from "./pages/availability";
 
 /**
@@ -34,6 +34,7 @@ export default function App() {
           {/* Which centres they work at vs. when they sit — two questions,
               two screens. Availability is the former, Schedule the latter. */}
           <Route path="/doctor/schedule" element={page(<Schedule />)} />
+          <Route path="/doctor/stock" element={page(<ProductStock />)} />
           <Route path="/doctor/profile" element={page(<DoctorProfile />)} />
           <Route path="/doctor/patient" element={page(<PatientDetail />)} />
 

@@ -15,7 +15,7 @@ import {
   isoDay, nameOf, pct, patientFlags, statusKey,
 } from "../lib/format";
 import { STATUS } from "../ui";
-import type { Booking, Consultation, Doctor, Package, PreConsultForm, PrescriptionItem } from "../lib/types";
+import type { Booking, Consultation, ConsultationStage, Doctor, Package, PreConsultForm, PrescriptionItem, ProductAvailability } from "../lib/types";
 
 /** Bookings assigned to this doctor, for a date (or a window) — filtered server-side. */
 function useMyBookings(doctor: Doctor | null | undefined, date?: string, range?: { startDate: string; endDate: string }) {
@@ -132,7 +132,7 @@ export function MyDay() {
                       <B key={b._id}>{b.confirmedTime || b.preferredTimeSlots?.[0] || "—"}</B>,
                       <B key={`${b._id}n`}>{b.fullName}</B>,
                       bookingServiceName(b),
-                      b.preferredLocation,
+                      <span key={`${b._id}l`}>{b.preferredLocation}{b.source === "zenoti" && <span className="ml-1 text-[10.5px] text-ink3">· Zenoti</span>}</span>,
                       formStatus
                         ? <Tag key={`${b._id}f`} kind={formStatus === "Submitted" || formStatus === "Approved" ? "ok" : "warn"}>{formStatus}</Tag>
                         : <Tag key={`${b._id}f`} kind="mute">not filled</Tag>,
@@ -213,6 +213,13 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
   const [sendingRx, setSendingRx] = useState(false);
   const [assigned, setAssigned] = useState<{ serviceId?: string; packageId?: string; name: string; sessions?: number }[]>([]);
   const [followUp, setFollowUp] = useState("");
+  // Diagnosis and advice — structured so they can be reported on and printed
+  // in their own right, rather than buried inside `assessment`.
+  const [primaryDiagnosis, setPrimaryDiagnosis] = useState("");
+  const [secondaryDiagnosis, setSecondaryDiagnosis] = useState("");
+  const [skinCareAdvice, setSkinCareAdvice] = useState("");
+  const [lifestyleAdvice, setLifestyleAdvice] = useState("");
+  const [precautions, setPrecautions] = useState("");
   const [sketch, setSketch] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -261,8 +268,17 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
     () => (userId ? api.consentForms.list({ userId, limit: 1 }).then((r) => (r.data ?? [])[0] ?? null).catch(() => null) : Promise.resolve(null)),
     [userId],
   );
+  /*
+   * The prescription pad searches the price-free availability view, not
+   * /admin/products. A dermatologist account no longer holds `products.view`
+   * (see ROLE_BASELINES in the backend's config/permissions.js), because that
+   * list carries buying and selling prices in every row.
+   */
   const rxSuggest = useApi(
-    () => (rxSearch.trim().length >= 2 ? api.products.list({ search: rxSearch.trim() }).then((r) => (r.data ?? []).slice(0, 6)).catch(() => []) : Promise.resolve([])),
+    () => (rxSearch.trim().length >= 2
+      ? api.productAvailability.list({ search: rxSearch.trim(), limit: 6 })
+          .then((r) => (r.data ?? []).slice(0, 6)).catch(() => [])
+      : Promise.resolve([])),
     [rxSearch],
   );
 
@@ -303,6 +319,11 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
       name: a.name, sessions: a.sessions,
     })));
     setFollowUp(n.followUpDate ? isoDay(new Date(n.followUpDate)) : "");
+    setPrimaryDiagnosis(n.primaryDiagnosis ?? "");
+    setSecondaryDiagnosis(n.secondaryDiagnosis ?? "");
+    setSkinCareAdvice(n.skinCareAdvice ?? "");
+    setLifestyleAdvice(n.lifestyleAdvice ?? "");
+    setPrecautions(n.precautions ?? "");
     setSketch(n.sketch ?? null);
     setDirty(false);
   }, [note.data?._id, note.data?.updatedAt]);
@@ -336,10 +357,13 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
       const saved = await api.consultationNotes.save({
         bookingId, complaint, examination, assessment, plan, sketch: sketch ?? undefined,
         prescription: rx, assignedServices: assigned, followUpDate: followUp || null, status,
+        primaryDiagnosis, secondaryDiagnosis, skinCareAdvice, lifestyleAdvice, precautions,
         // The booking's specialist owns the note; for a walk-in with none, the signed-in doctor does.
         doctorId: me?.doctorId, doctorName: me?.name,
       } as Parameters<typeof api.consultationNotes.save>[0]);
       if (status === "Completed") {
+        // Signing IS "prescription created" — advance the lifecycle without a second tap.
+        if (bookingId) api.bookings.setStage(bookingId, { stage: "prescription_created" }).catch(() => undefined);
         // The route middleware already audits PRESCRIPTION_SAVED — no second row from here.
         toast(saved?.prescriptionEmailedAt
           ? `Signed — prescription emailed to ${saved.prescriptionEmailedTo ?? "the guest"}`
@@ -354,24 +378,58 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
 
   const completed = note.data?.status === "Completed";
 
-  const downloadRx = () => {
+  /** Same slip as downloadRx, sent to the print dialog ("Save as PDF" lives there). */
+  const printRx = () => {
+    const html = buildRxHtml();
+    if (!html) return;
+    const w = window.open("", "_blank", "width=720,height=900");
+    if (!w) { toast("Allow pop-ups to print"); return; }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 300);
+  };
+
+  /** The signed prescription as printable HTML — shared by print and download. */
+  const buildRxHtml = (): string | null => {
     const p = patient.data;
     const age = ageFrom(p?.dateOfBirth);
     // Always the SIGNED record, never unsaved edits on screen.
     const n = note.data;
-    const signed = { rx: n?.prescription ?? [], complaint: n?.complaint ?? "", examination: n?.examination ?? "", assessment: n?.assessment ?? "", plan: n?.plan ?? "", followUp: n?.followUpDate ? isoDay(new Date(n.followUpDate)) : "" };
+    const signed = {
+      rx: n?.prescription ?? [], complaint: n?.complaint ?? "", examination: n?.examination ?? "",
+      assessment: n?.assessment ?? "", plan: n?.plan ?? "",
+      primary: n?.primaryDiagnosis ?? "", secondary: n?.secondaryDiagnosis ?? "",
+      skinCare: n?.skinCareAdvice ?? "", lifestyle: n?.lifestyleAdvice ?? "", precautions: n?.precautions ?? "",
+      followUp: n?.followUpDate ? isoDay(new Date(n.followUpDate)) : "",
+    };
     const items = signed.rx.map((r) => {
-      const bits = [r.dosage, r.frequency, r.duration, r.instructions].filter(Boolean).join(" · ");
-      return `<li>${r.medicine}${bits ? ` — ${bits}` : ""}${r.isScheduleH ? " <b>(Sch H)</b>" : ""}</li>`;
+      const name = [r.medicine, r.strength, r.formulation].filter(Boolean).join(" ");
+      const bits = [r.dosage, r.frequency, r.duration, r.timing, r.instructions].filter(Boolean).join(" · ");
+      return `<li>${name}${bits ? ` — ${bits}` : ""}${r.isScheduleH ? " <b>(Sch H)</b>" : ""}</li>`;
     }).join("");
+    // Advice is part of the prescription, not a separate note — a patient
+    // reading the printed slip needs the precautions on the same page.
+    const adviceBlock = [
+      ["Skin care", signed.skinCare], ["Diet & lifestyle", signed.lifestyle], ["Precautions", signed.precautions],
+    ].filter(([, v]) => v).map(([k, v]) => `<p><b>${k}:</b> ${v}</p>`).join("");
     const html = `<html><head><title>Prescription — ${p?.fullName ?? ""}</title><style>body{font-family:Georgia,serif;max-width:640px;margin:40px auto;color:#111}h1{font-size:20px;letter-spacing:2px}hr{border:0;border-top:1px solid #ccc}li{margin:8px 0}</style></head>
 <body><h1>ZENNARA</h1><p>Skin · Aesthetics · Wellness — ${booking.data?.preferredLocation ?? ""}</p><hr>
 <p><b>Patient:</b> ${p?.fullName ?? ""}${age ? ` · ${age} ${p?.gender ?? ""}` : ""}${p?.patientId ? `<br><b>Patient ID:</b> ${p.patientId}` : ""}<br><b>Date:</b> ${fmtDateFull(new Date())}</p>
 <p><b>Complaint:</b> ${signed.complaint || "—"}</p><p><b>Examination:</b> ${signed.examination || "—"}</p>
 <p><b>Assessment:</b> ${signed.assessment || "—"}</p><p><b>Plan:</b> ${signed.plan || "—"}</p>
+${signed.primary ? `<p><b>Diagnosis:</b> ${signed.primary}${signed.secondary ? ` · ${signed.secondary}` : ""}</p>` : ""}
 <h3>Rx</h3><ol>${items || "<li>—</li>"}</ol>
+${adviceBlock}
 ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` : ""}<hr>
 <p><b>${doctorName}</b></p></body></html>`;
+    return html;
+  };
+
+  const downloadRx = () => {
+    const p = patient.data;
+    const html = buildRxHtml();
+    if (!html) return;
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([html], { type: "text/html" }));
     a.download = `prescription-${(p?.fullName ?? "patient").toLowerCase().replace(/\s+/g, "-")}.html`;
@@ -484,7 +542,27 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
                   {Object.entries(form.data.medicalHistory ?? {}).filter(([, v]) => v).length > 0 && (
                     <><B>Medical history</B> {Object.entries(form.data.medicalHistory ?? {}).filter(([, v]) => v).map(([k, v]) => (typeof v === "string" ? `${k}: ${v}` : k)).join(", ")}<br /></>
                   )}
-                  {form.data.planningForPregnancy && <><B>Planning pregnancy</B> yes<br /></>}
+                    {form.data.symptomDuration && <><B>Duration</B> {form.data.symptomDuration}<br /></>}
+                  {form.data.previousTreatments && <><B>Previous treatment</B> {form.data.previousTreatments}<br /></>}
+                  {form.data.currentMedications && (
+                    <><b className="font-semibold text-err">Current medication</b> {form.data.currentMedications}<br /></>
+                  )}
+                  {form.data.pregnancyStatus && !["not_applicable", "prefer_not_to_say"].includes(form.data.pregnancyStatus) && (
+                    /* Load-bearing: most lasers, peels and several drugs are
+                       contraindicated in pregnancy, so it reads as a warning. */
+                    <><b className="font-semibold text-err">Pregnancy</b> {form.data.pregnancyStatus.replace(/_/g, " ")}<br /></>
+                  )}
+                  {form.data.patientNotes && <><B>Patient notes</B> {form.data.patientNotes}<br /></>}
+                  {(form.data.photos ?? []).length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {(form.data.photos ?? []).map((ph, i) => (
+                        <a key={i} href={ph.url} target="_blank" rel="noreferrer">
+                          <img src={ph.url} alt={ph.caption || "Patient photo"} className="h-16 w-16 rounded-lg border border-border object-cover" />
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                {form.data.planningForPregnancy && <><B>Planning pregnancy</B> yes<br /></>}
                   {form.data.lastMenstrualPeriod && <><B>LMP</B> {fmtDate(form.data.lastMenstrualPeriod)}<br /></>}
                   {form.data.diet?.type && <><B>Diet</B> {String(form.data.diet.type)}<br /></>}
                   {form.data.dailyRoutine && Object.values(form.data.dailyRoutine).some(Boolean) && (
@@ -529,8 +607,20 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
           </Card>
         </div>
 
-        {/* ---- clinical note ---- */}
+        {/* ---- diagnosis, clinical note ---- */}
         <div className="grid gap-2.5">
+          {booking.data && <ConsultationProgress booking={booking.data} onChanged={() => booking.reload()} />}
+
+          <Card className="p-4">
+            <SecH t="Diagnosis" em="· printed on the prescription" />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <In label="Primary diagnosis" value={primaryDiagnosis}
+                onChange={(v) => { setPrimaryDiagnosis(v); setDirty(true); }} />
+              <In label="Secondary diagnosis" value={secondaryDiagnosis}
+                onChange={(v) => { setSecondaryDiagnosis(v); setDirty(true); }} />
+            </div>
+          </Card>
+
           <Card className="p-4">
             <SecH t="Clinical note" em={`· dictation: ${dict.engine === "deepgram" ? "Deepgram live" : dict.engine === "browser" ? "browser engine" : "unavailable"}`} />
             <div className="grid gap-2.5">
@@ -593,8 +683,9 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
           )}
         </div>
 
-        {/* ---- assign + rx ---- */}
+        {/* ---- photographs, assign + rx ---- */}
         <div className="grid gap-2.5">
+          <PatientPhotos userId={userId} bookingId={bookingId} />
           <Card data-tour="assign" className="p-4">
             <SecH t="Assign treatment" em="· packages are assigned by the clinic" />
             <input value={svcQ} onChange={(e) => setSvcQ(e.target.value)} placeholder="Search treatments…"
@@ -641,6 +732,7 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
                     {sendingRx ? "Sending…" : note.data?.prescriptionEmailedAt ? "Resend email" : "Email to guest"}
                   </Btn>
                 )}
+                <Btn kind="ghost" className="!py-1 !text-[11.5px]" disabled={!completed} onClick={() => printRx()}>Print / PDF</Btn>
                 <Btn kind={completed ? "gold" : "ghost"} className="!py-1 !text-[11.5px]" disabled={!completed} onClick={downloadRx}>
                   {completed ? "Download" : "Sign to unlock"}
                 </Btn>
@@ -667,9 +759,24 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
             {(rxSuggest.data ?? []).length > 0 && (
               <div className="mb-2 rounded-lg border border-border bg-surface">
                 {(rxSuggest.data ?? []).map((pr) => (
-                  <button key={pr._id} onClick={() => { setRx((r) => [...r, { medicine: pr.name, isScheduleH: false }]); setRxQ(""); setDirty(true); }}
+                  <button key={pr._id} onClick={() => {
+                    // A Zennara product carries its id and the stock at the
+                    // moment of prescribing (quantity only — never a price).
+                    setRx((r) => [...r, {
+                      medicine: pr.name, isScheduleH: false,
+                      formulation: pr.formulation ?? null,
+                      productId: pr.source === "product" ? pr._id : null,
+                      availableQuantity: pr.quantity,
+                    }]);
+                    setRxQ(""); setDirty(true);
+                  }}
                     className="flex w-full items-center justify-between gap-2 border-b border-border px-2.5 py-1.5 text-left text-[12px] last:border-0 hover:bg-ivory">
-                    <span className="min-w-0 truncate">{pr.name}</span><span className="shrink-0 text-[10.5px] text-ink3">{pr.formulation} · {fmtINR(pr.price)}</span>
+                    <span className="min-w-0 truncate">{pr.name}</span>
+                    <span className="shrink-0 text-[10.5px] text-ink3">
+                      {[pr.formulation, pr.sku].filter(Boolean).join(" · ")}
+                      {pr.formulation || pr.sku ? " · " : ""}
+                      <StockPill status={pr.status} qty={pr.quantity} />
+                    </span>
                   </button>
                 ))}
               </div>
@@ -683,7 +790,11 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
                     className="shrink-0 font-bold text-err">×</button>
                 </div>
                 <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-                  {([["dosage", "Dose"], ["frequency", "Frequency"], ["duration", "Duration"]] as [keyof PrescriptionItem, string][]).map(([k, label]) => (
+                  {([
+                    ["strength", "Strength"], ["formulation", "Form"],
+                    ["dosage", "Dose"], ["frequency", "Frequency"],
+                    ["duration", "Duration"], ["timing", "Timing"],
+                  ] as [keyof PrescriptionItem, string][]).map(([k, label]) => (
                     <input key={String(k)} value={(m[k] as string) ?? ""} placeholder={label}
                       onChange={(e) => { setRx((r) => r.map((x, j) => (j === i ? { ...x, [k]: e.target.value } : x))); setDirty(true); }}
                       className="rounded border border-border bg-ivory px-2 py-1 text-[11px] outline-none focus:border-gold-dark" />
@@ -701,6 +812,21 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
               </div>
             ))}
             <div className="mt-2 border-t border-border pt-2 text-[11px] text-ink3">Signs as <B>{doctorName}</B></div>
+          </Card>
+
+          <Card className="p-4">
+            <SecH t="Advice" em="· printed under the prescription" />
+            <div className="grid gap-2">
+              <Area label="Skin care" value={skinCareAdvice} rows={2}
+                placeholder="Cleanser, moisturiser, sunscreen — how and when"
+                onChange={(v) => { setSkinCareAdvice(v); setDirty(true); }} />
+              <Area label="Diet & lifestyle" value={lifestyleAdvice} rows={2}
+                placeholder="Anything to change day to day"
+                onChange={(v) => { setLifestyleAdvice(v); setDirty(true); }} />
+              <Area label="Precautions" value={precautions} rows={2}
+                placeholder="Sun exposure, waxing, actives to pause"
+                onChange={(v) => { setPrecautions(v); setDirty(true); }} />
+            </div>
           </Card>
         </div>
       </div>
@@ -1495,6 +1621,267 @@ export function DoctorProfile() {
         </div>
       </Modal>
       
+    </Page>
+  );
+}
+
+/**
+ * In stock / low stock / out of stock, in the same words the backend uses.
+ * Quantity is always shown; price never is — this panel has no access to one.
+ */
+
+/**
+ * Clinical photographs for one patient.
+ *
+ * Capture is a plain file input with `capture="environment"`, which is what
+ * makes "click a photo from the panel" work on a phone or tablet — the device
+ * opens its own camera and hands back the file. On a desktop the same control
+ * is an ordinary file picker, so one component covers both without a separate
+ * camera implementation.
+ *
+ * Photos are grouped before / during / after and, inside each group, read
+ * newest first — the same direction as every other history list.
+ */
+function PatientPhotos({ userId, bookingId }: { userId: string; bookingId?: string | null }) {
+  const [phase, setPhase] = useState<"before" | "during" | "after">("before");
+  const [area, setArea] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const { toast } = useStore();
+
+  const photos = useApi(
+    () => (userId ? api.patientPhotos.list({ userId, limit: 200 }).then((r) => r.data ?? []) : Promise.resolve([])),
+    [userId, nonce],
+  );
+
+  const send = async (files: FileList | null) => {
+    if (!files?.length || !userId) return;
+    setBusy(true); setErr(null);
+    try {
+      await api.patientPhotos.upload(Array.from(files), {
+        userId, bookingId: bookingId ?? null, phase, bodyArea: area.trim(),
+      });
+      toast(files.length === 1 ? "Photograph saved" : `${files.length} photographs saved`);
+      setArea("");
+      setNonce((n) => n + 1);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const groups: { key: "before" | "during" | "after"; label: string }[] = [
+    { key: "before", label: "Before" },
+    { key: "during", label: "During" },
+    { key: "after", label: "After" },
+  ];
+
+  return (
+    <Card data-tour="photos" className="p-4">
+      <SecH t="Photographs" em="· before, during and after, newest first" />
+
+      <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+        {groups.map((g) => (
+          <button key={g.key} onClick={() => setPhase(g.key)}
+            className={`rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold ${phase === g.key ? "bg-primary text-white" : "border border-border bg-surface text-ink2"}`}>
+            {g.label}
+          </button>
+        ))}
+        <input value={area} onChange={(e) => setArea(e.target.value)} placeholder="Area (e.g. left cheek)"
+          className="min-w-[150px] flex-1 rounded-lg border border-border bg-ivory px-2.5 py-1.5 text-[11.5px] outline-none focus:border-gold-dark" />
+      </div>
+
+      {/* `capture` asks a mobile browser for the camera; desktop falls back to
+          an ordinary picker, so one control serves both. */}
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple
+        disabled={busy || !userId}
+        onChange={(e) => send(e.target.files)}
+        className="mb-2 block w-full text-[11.5px] file:mr-2 file:rounded-lg file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-[11.5px] file:font-bold file:text-white" />
+      {busy && <div className="mb-2 text-[11.5px] text-ink3">Uploading…</div>}
+      {err && <Note kind="crit" className="mb-2 text-[11.5px]">{err}</Note>}
+
+      {(photos.data ?? []).length === 0 && !photos.loading && (
+        <div className="text-[11.5px] text-ink3">No photographs yet for this patient.</div>
+      )}
+
+      {groups.map((g) => {
+        const rows = (photos.data ?? []).filter((ph) => ph.phase === g.key);
+        if (!rows.length) return null;
+        return (
+          <div key={g.key} className="mb-3">
+            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink3">{g.label} · {rows.length}</div>
+            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
+              {rows.map((ph) => (
+                <a key={ph._id} href={ph.url} target="_blank" rel="noreferrer"
+                   className="group relative overflow-hidden rounded-lg border border-border">
+                  <img src={ph.url} alt={ph.bodyArea || g.label} className="h-24 w-full object-cover" />
+                  <span className="absolute inset-x-0 bottom-0 bg-black/55 px-1.5 py-1 text-[9.5px] leading-tight text-white">
+                    {fmtDate(ph.takenAt)}{ph.bodyArea ? ` · ${ph.bodyArea}` : ""}
+                  </span>
+                </a>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
+
+/** The clinical lifecycle, in the order the clinic runs it. */
+const STAGES: { key: ConsultationStage; label: string }[] = [
+  { key: "waiting", label: "Waiting" },
+  { key: "consultation_started", label: "Started" },
+  { key: "consultation_completed", label: "Completed" },
+  { key: "prescription_created", label: "Prescription created" },
+  { key: "treatment_recommended", label: "Treatment recommended" },
+];
+
+export const STAGE_LABEL: Record<string, string> = {
+  booked: "Booked", confirmed: "Confirmed", checked_in: "Checked in", waiting: "Waiting",
+  consultation_started: "Consultation started", consultation_completed: "Consultation completed",
+  prescription_created: "Prescription created", treatment_recommended: "Treatment recommended",
+  follow_up_required: "Follow-up required", no_follow_up: "No follow-up needed",
+};
+
+/**
+ * Consultation progress — the buttons that move a visit through
+ * waiting → started → completed → prescription → treatment → follow-up.
+ *
+ * This writes `consultationStage`, never the booking `status`, so pressing a
+ * button here can never disturb the diary or the Zenoti mirror. The follow-up
+ * decision lives on the same card because "done, see them in six weeks" is one
+ * thought for the dermatologist, not two screens.
+ */
+export function ConsultationProgress({ booking, onChanged }: { booking: Booking; onChanged: () => void }) {
+  const { toast } = useStore();
+  const [busy, setBusy] = useState(false);
+  const [fuRequired, setFuRequired] = useState(Boolean(booking.followUp?.required));
+  const [fuDate, setFuDate] = useState(booking.followUp?.dueDate ? isoDay(new Date(booking.followUp.dueDate)) : "");
+  const [fuNotes, setFuNotes] = useState(booking.followUp?.notes ?? "");
+
+  const current = booking.consultationStage ?? null;
+  const idx = STAGES.findIndex((s) => s.key === current);
+
+  const set = async (stage: ConsultationStage, followUp?: { required: boolean; dueDate?: string | null; notes?: string }) => {
+    setBusy(true);
+    try {
+      await api.bookings.setStage(booking._id, { stage, ...(followUp ? { followUp } : {}) });
+      toast(STAGE_LABEL[stage]);
+      onChanged();
+    } catch (e) { toast((e as Error).message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Card data-tour="progress" className="p-4">
+      <SecH t="Consultation progress" em={current ? `· ${STAGE_LABEL[current] ?? current}` : "· not started"} />
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {STAGES.map((s, i) => (
+          <button key={s.key} disabled={busy} onClick={() => set(s.key)}
+            className={`rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold ${
+              i === idx ? "bg-primary text-white" : i < idx ? "bg-ok-bg text-ok" : "border border-border bg-surface text-ink2"
+            }`}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="rounded-lg border border-border p-2.5">
+        <div className="mb-1.5 flex items-center gap-2 text-[12px] font-semibold text-ink2">
+          <Toggle on={fuRequired} onChange={setFuRequired} /> Follow-up required
+        </div>
+        {fuRequired && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            <In label="Follow-up on" type="date" value={fuDate} onChange={setFuDate} />
+            <In label="Note" value={fuNotes} onChange={setFuNotes} placeholder="Review response, repeat photos…" />
+          </div>
+        )}
+        <div className="mt-2">
+          <Btn kind="ghost" className="!px-2.5 !py-1.5 !text-[11.5px]" disabled={busy}
+            onClick={() => set(fuRequired ? "follow_up_required" : "no_follow_up",
+              { required: fuRequired, dueDate: fuRequired && fuDate ? fuDate : null, notes: fuRequired ? fuNotes : "" })}>
+            {fuRequired ? "Save follow-up & finish" : "No follow-up — finish"}
+          </Btn>
+        </div>
+      </div>
+      {(booking.consultationStageHistory ?? []).length > 0 && (
+        <div className="mt-2 text-[11px] text-ink3">
+          {(booking.consultationStageHistory ?? []).slice(-3).reverse().map((h, i) => (
+            <div key={i}>{fmtWhen(h.at)} · {STAGE_LABEL[h.stage] ?? h.stage}{h.byName ? ` · ${h.byName}` : ""}</div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+export function StockPill({ status, qty }: { status: ProductAvailability["status"]; qty: number }) {
+  if (status === "out_of_stock") return <Tag kind="err">Out of stock</Tag>;
+  if (status === "low_stock") return <Tag kind="warn">Low · {qty} left</Tag>;
+  return <Tag kind="ok">In stock · {qty}</Tag>;
+}
+
+/**
+ * Product availability — "can I recommend this, and is it here today?".
+ *
+ * Deliberately has no price column, no vendor and no purchase history: those
+ * are procurement concerns and the endpoint behind this page does not return
+ * them at all.
+ */
+export function ProductStock() {
+  const { branchId } = useStore();
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState("");
+  const rows = useApi(
+    () => api.productAvailability
+      .list({ ...(q.trim() ? { search: q.trim() } : {}), ...(branchId ? { branchId } : {}), ...(status ? { status } : {}) })
+      .then((r) => r.data ?? []),
+    [q, branchId, status],
+  );
+
+  return (
+    <Page title="Product availability" sub="What you can recommend today, and whether it is in stock.">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <input
+          value={q} onChange={(e) => setQ(e.target.value)}
+          placeholder="Search by name, SKU, brand or formulation"
+          className="min-w-[240px] flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-[13px] outline-none focus:border-gold-dark" />
+        {([["", "All"], ["in_stock", "In stock"], ["low_stock", "Low"], ["out_of_stock", "Out"]] as [string, string][]).map(([v, label]) => (
+          <button key={v || "all"} onClick={() => setStatus(v)}
+            className={`rounded-lg px-3 py-2 text-[12px] font-semibold ${status === v ? "bg-primary text-white" : "border border-border bg-surface text-ink2"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {rows.loading && <div className="text-[12.5px] text-ink3">Loading…</div>}
+      {!rows.loading && (rows.data ?? []).length === 0 && (
+        <div className="rounded-xl border border-border bg-surface p-6 text-center text-[12.5px] text-ink3">
+          Nothing matches that search.
+        </div>
+      )}
+
+      <div className="grid gap-2">
+        {(rows.data ?? []).map((p) => (
+          <div key={`${p.source}-${p._id}`} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3.5 py-2.5">
+            <div className="min-w-0">
+              <div className="truncate text-[13px] font-bold">{p.name}</div>
+              <div className="truncate text-[11px] text-ink3">
+                {[p.sku, p.brand, p.category, p.productType, p.formulation].filter(Boolean).join(" · ") || "—"}
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {p.syncedFromZenoti && <Tag kind="info">Zenoti</Tag>}
+              <StockPill status={p.status} qty={p.quantity} />
+            </div>
+          </div>
+        ))}
+      </div>
     </Page>
   );
 }

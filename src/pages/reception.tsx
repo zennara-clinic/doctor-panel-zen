@@ -11,13 +11,13 @@ import { ZenotiMembershipCard, ZenotiPackageCard, appointmentState, fmtZDate, fm
 import { getSocket, type ChatUpdate, type DeletedEvent, type PresenceEvent, type TypingEvent } from "../lib/socket";
 import { useApi, useDebounced, useMutation, usePoll } from "../lib/useApi";
 import { useQueryNumber, useQueryPage, useQueryString } from "../lib/useListState";
-import {
+import { CLINIC_TZ,
   ageFrom, bookingProvider, bookingServiceName, bookingSlotDate, bookingSlotLabel, bookingSource, fmtAgo, fmtCompactINR,
   fmtDate, fmtDateFull, fmtINR, fmtWhen, idOf, initials, isoDay, isVip, nameOf, patientFlags, pct,
   statusKey, mapToRows, isConsultationBooking, clinicHM, addClinicDays, clinicMonthEnd,
   clinicMonthStart, clinicWeekday, dayKeyDate, fmtDayKey,
 } from "../lib/format";
-import type { Booking, Branch, Chat as ChatThread, ChatMessage, Consultation, Doctor, ProductOrder, User } from "../lib/types";
+import type { ConsultationStage, Booking, Branch, Chat as ChatThread, ChatMessage, Consultation, Doctor, ProductOrder, User } from "../lib/types";
 
 /* ================= OVERVIEW ================= */
 const RANGE_PRESETS: [string, () => { startDate: string; endDate: string }][] = [
@@ -227,6 +227,53 @@ function DermPicker({ booking, value, onChange }: { booking: Booking; value: Der
   );
 }
 
+
+const STAGE_LABEL: Record<string, string> = {
+  booked: "Booked", confirmed: "Confirmed", checked_in: "Checked in", waiting: "Waiting",
+  consultation_started: "Consultation started", consultation_completed: "Consultation completed",
+  prescription_created: "Prescription created", treatment_recommended: "Treatment recommended",
+  follow_up_required: "Follow-up required", no_follow_up: "No follow-up needed",
+};
+
+/** "Pre-consultation form: Completed" — one cheap call per opened booking. */
+function FormStatusLine({ bk }: { bk: Booking }) {
+  const st = useApi(() => api.preConsult.statusForBooking(bk._id).catch(() => null), [bk._id]);
+  if (!st.data) return null;
+  const kind = st.data.state === "completed" ? "ok" : st.data.state === "draft" ? "warn" : "mute";
+  return (
+    <div className="mt-2 rounded-lg bg-ivory px-2.5 py-2 text-[11.5px] text-ink2">
+      <span className="mr-2">Pre-consultation form:</span>
+      <Tag kind={kind}>{st.data.label}</Tag>
+      <span className="ml-2 text-ink3">Open the consultation to read it in full.</span>
+    </div>
+  );
+}
+
+/** Where the consultation is; the desk's two moves are waiting / with dermatologist. */
+function StageLine({ bk, onChanged }: { bk: Booking; onChanged: () => void }) {
+  const { toast } = useStore();
+  const [busy, setBusy] = useState(false);
+  if (["Cancelled", "No Show"].includes(bk.status)) return null;
+  const move = async (stage: ConsultationStage) => {
+    setBusy(true);
+    try { await api.bookings.setStage(bk._id, { stage }); toast(STAGE_LABEL[stage]); onChanged(); }
+    catch (e) { toast((e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-ivory px-2.5 py-2 text-[11.5px] text-ink2">
+      <span>Consultation:</span>
+      <Tag kind={bk.consultationStage ? "info" : "mute"}>{bk.consultationStage ? STAGE_LABEL[bk.consultationStage] : "Not started"}</Tag>
+      {bk.followUp?.required && <Tag kind="gold">Follow-up{bk.followUp.dueDate ? ` · ${fmtDate(bk.followUp.dueDate)}` : ""}</Tag>}
+      {["In Progress", "Confirmed", "Rescheduled"].includes(bk.status) && (
+        <>
+          <button className="underline-offset-2 hover:underline" disabled={busy} onClick={() => move("waiting")}>Mark waiting</button>
+          <button className="underline-offset-2 hover:underline" disabled={busy} onClick={() => move("consultation_started")}>With dermatologist</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function BookingDrawer({ id, onClose, onChanged }: {
   id: string | null; onClose: () => void; onChanged: () => void;
 }) {
@@ -318,6 +365,8 @@ function BookingDrawer({ id, onClose, onChanged }: {
                   ))}
                 </div>
               )}
+              <FormStatusLine bk={bk} />
+              <StageLine bk={bk} onChanged={() => { q.reload(); onChanged(); }} />
               {bk.notes && <Note className="mb-0">{bk.notes}</Note>}
             </Card>
 
@@ -2005,7 +2054,7 @@ function EditPatientModal({ open, onClose, user, onSaved }: {
 function slotLabelFromLocal(dt: string): string {
   const d = new Date(dt);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  return d.toLocaleTimeString("en-US", { timeZone: CLINIC_TZ, hour: "numeric", minute: "2-digit", hour12: true });
 }
 
 type DraftSession = { serviceId: string; serviceName: string; dt: string };
@@ -2208,7 +2257,10 @@ export function Consultations() {
             : null;
 
           const recent = [...inRange]
-            .sort((a, b) => new Date(b.preferredDate).getTime() - new Date(a.preferredDate).getTime())
+            // eventAt folds confirmed/preferred date and the time of day into one instant;
+            // the fallback only matters for a response from an older backend.
+            .sort((a, b) => new Date(b.eventAt ?? b.confirmedDate ?? b.preferredDate).getTime()
+              - new Date(a.eventAt ?? a.confirmedDate ?? a.preferredDate).getTime())
             .slice(0, 60);
 
           return (

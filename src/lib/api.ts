@@ -8,11 +8,11 @@
 import { request, requestRaw, type Envelope, type Query } from "./http";
 import type {
   Admin, AppCustomization, AuditEntry, Banner, Booking, BookingSession, Branch, Brand, Category, Chat, ChatMessage, DeletedAccount, StockMovement,
-  Consultation, ConsentForm, ConsultationNote, ConsultationReview, Coupon, DermatologistSchedule,
+  Consultation, ConsultationStage, ConsentForm, ConsultationNote, ConsultationReview, Coupon, DermatologistSchedule,
   Doctor, DoctorAvailability, WeeklyBlock,
   DoctorFeeRequest, Formulation, MyFee, ScheduleDay, SlotDay,
   Id, Inventory, Notification, Package, PackageAssignment, PreConsultForm, Product, ProductOrder,
-  ProductReview, ServiceCard, ServiceReview, ServiceType, SupportMessage, TaxonomyTree, User, Vendor,
+  PatientPhoto, ProductAvailability, ProductReview, ServiceCard, ServiceReview, ServiceType, SupportMessage, TaxonomyTree, User, Vendor,
 } from "./types";
 import type { VisitCodeLog } from "./types";
 
@@ -37,6 +37,12 @@ export const auth = {
     }),
   me: () => request<Admin>("/admin/auth/me"),
   logout: () => requestRaw("/admin/auth/logout", { method: "POST" }),
+  /** Remember that this account finished a walkthrough. */
+  markTourSeen: (key: string) =>
+    requestRaw("/admin/auth/me/tours", { method: "PUT", body: { key } }),
+  /** "View tutorial again" — omit `key` to replay every tour. */
+  resetTours: (key?: string) =>
+    requestRaw(`/admin/auth/me/tours${key ? `?key=${encodeURIComponent(key)}` : ""}`, { method: "DELETE" }),
   /** Change my own login email / phone. Changing the email needs the current password. */
   updateContact: (body: { email?: string; phone?: string; currentPassword?: string }) =>
     request<Admin>("/admin/auth/me/contact", { method: "PUT", body }),
@@ -117,6 +123,9 @@ export type NewBooking = {
 export type DermPick = { specialistId?: string; specialistName?: string };
 
 export const bookings = {
+  /** Move the consultation through its clinical lifecycle; never touches `status`. */
+  setStage: (id: Id, body: { stage?: ConsultationStage | null; followUp?: { required?: boolean; dueDate?: string | null; notes?: string } }) =>
+    request<{ _id: Id; consultationStage: ConsultationStage | null; followUp?: Booking["followUp"] }>(`/bookings/admin/${id}/stage`, { method: "PATCH", body }),
   /** Same filters as `list`; returns labelled rows for CSV. `fields` trims columns. */
   export: (q?: Query) => request<Record<string, unknown>[]>("/bookings/admin/export", { query: q }),
   /** Staff send/resend the guest's check-in or check-out code (email / whatsapp / both). */
@@ -426,6 +435,35 @@ export const orders = {
 };
 
 /* ============================ stock ============================ */
+/**
+ * Doctor-facing stock. Separate from `products` on purpose: that endpoint
+ * returns prices and a dermatologist account is not permitted to call it.
+ * Named `productAvailability` because `availability` already means the
+ * dermatologist-centre availability above.
+ */
+export const productAvailability = {
+  list: (q?: { search?: string; branchId?: Id; status?: string; limit?: number }) =>
+    requestRaw<ProductAvailability[]>("/inventory/availability", { query: q as Query }),
+};
+
+/**
+ * Clinical photographs. Multipart upload, because the browser must be able to
+ * hand over a file straight from the device camera (capture="environment").
+ */
+export const patientPhotos = {
+  list: (q: { userId?: Id; bookingId?: Id; phase?: string; limit?: number }) =>
+    requestRaw<PatientPhoto[]>("/patient-photos", { query: q as Query }),
+  upload: (files: File[], meta: { userId: Id; bookingId?: Id | null; phase?: string; bodyArea?: string; note?: string; takenAt?: string }) => {
+    const form = new FormData();
+    files.forEach((f) => form.append("photos", f));
+    Object.entries(meta).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== "") form.append(k, String(v)); });
+    return requestRaw<PatientPhoto[]>("/patient-photos", { method: "POST", body: form });
+  },
+  update: (id: Id, body: Partial<Pick<PatientPhoto, "phase" | "bodyArea" | "note">> & { bookingId?: Id | null }) =>
+    request<PatientPhoto>(`/patient-photos/${id}`, { method: "PATCH", body }),
+  remove: (id: Id) => requestRaw(`/patient-photos/${id}`, { method: "DELETE" }),
+};
+
 export const inventory = {
   list: (q?: Query) => requestRaw<Inventory[]>("/admin/inventory", { query: q }),
   get: (id: Id) => request<Inventory>(`/admin/inventory/${id}`),
@@ -563,6 +601,11 @@ export const support = {
 
 /* ============================ clinical forms ============================ */
 export const preConsult = {
+  /** "Pre-consultation form: Completed" for one appointment — one cheap call. */
+  statusForBooking: (bookingId: Id) =>
+    request<{ state: "not_started" | "draft" | "completed"; label: string; formId: Id | null; linked: boolean; status?: string; updatedAt?: string }>(
+      `/pre-consult-forms/admin/by-booking/${bookingId}`,
+    ),
   list: (q?: Query) => requestRaw<PreConsultForm[]>("/pre-consult-forms/admin/all", { query: q }),
   setStatus: (id: Id, status: string) =>
     request<PreConsultForm>(`/pre-consult-forms/admin/${id}/status`, { method: "PATCH", body: { status } }),
@@ -873,7 +916,7 @@ export const contactChange = {
 
 export const api = {
   auth, branches, patients, bookings, services, serviceTypes, categories, packages, packageAssignments, consultationNotes,
-  doctors, availability, schedules, feeRequests, products, brands, formulations, coupons, orders, inventory, vendors,
+  doctors, availability, productAvailability, patientPhotos, schedules, feeRequests, products, brands, formulations, coupons, orders, inventory, vendors,
   appStudio, media, chat, notifications, reviews, support, preConsult, consentForms,
   serviceCards, analytics, audit, staff, zenoti, contactChange, banners,
 };

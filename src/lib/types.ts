@@ -19,6 +19,8 @@ export type Admin = {
   doctorId?: Id | null;
   /** False when the address is missing from the server's ADMIN_EMAILS allow-list. */
   canSignIn?: boolean;
+  /** Walkthroughs this account has already completed (server-held, not per-browser). */
+  toursSeen?: string[];
   createdAt?: string;
 };
 
@@ -150,6 +152,11 @@ export type BookingStatus =
 export type VisitCodeLog = { kind: "checkin" | "checkout"; channels: string[]; failed?: string[]; at: string; byName?: string | null };
 export type ManualCheck = { reason: string; byName?: string | null; at: string };
 
+export type ConsultationStage =
+  | "booked" | "confirmed" | "checked_in" | "waiting" | "consultation_started"
+  | "consultation_completed" | "prescription_created" | "treatment_recommended"
+  | "follow_up_required" | "no_follow_up";
+
 export type Booking = {
   /** Therapist reception assigned to run this session (Admin login id + name). */
   assignedTherapistId?: Id | null;
@@ -180,6 +187,17 @@ export type Booking = {
   specialistTier?: string;
   status: BookingStatus;
   confirmedDate?: string;
+  /** The appointment's own instant (confirmed → preferred, with time of day). Sort history on this. */
+  eventAt?: string | null;
+  /**
+   * Clinical lifecycle, separate from `status` (see the API's Booking model):
+   * waiting → consultation_started → consultation_completed → prescription_created
+   * → treatment_recommended → follow_up_required | no_follow_up.
+   */
+  consultationStage?: ConsultationStage | null;
+  consultationStageHistory?: { stage: ConsultationStage; at: string; byName?: string }[];
+  followUp?: { required?: boolean; dueDate?: string | null; notes?: string; bookingId?: Id | null };
+
   confirmedTime?: string;
   checkInTime?: string;
   checkOutTime?: string;
@@ -200,6 +218,7 @@ export type Booking = {
   zenotiSyncError?: string | null;
   therapistId?: Id | null;
   therapistName?: string;
+  zenotiTherapistName?: string;
   room?: string;
   /** What happened in the chair — written at checkout by the therapist. */
   session?: BookingSession;
@@ -345,7 +364,7 @@ export type PackageAssignment = {
   assignedByName?: string;
   zenotiPackageId?: string | null;
   zenotiInvoiceId?: string | null;
-  zenotiSyncStatus?: "pending" | "synced" | "dryrun" | "skipped" | "failed" | null;
+  zenotiSyncStatus?: "pending" | "synced" | "dryrun" | "skipped" | "failed" | "review" | null;
   zenotiSyncError?: string | null;
   completedServices?: { serviceId: string; completedAt: string; prescriptions?: string[] }[];
   createdAt?: string;
@@ -463,6 +482,48 @@ export type Product = {
   reviews?: number;
   isActive: boolean;
   isPopular?: boolean;
+  createdAt?: string;
+};
+
+/**
+ * A product as a dermatologist may see it — availability, never money.
+ * Served by GET /api/inventory/availability, which does not select the price
+ * columns at all, so no price is present to leak.
+ */
+export type ProductAvailability = {
+  _id: Id;
+  source: "product" | "inventory";
+  name: string;
+  sku: string | null;
+  category: string | null;
+  productType: string | null;
+  formulation: string | null;
+  brand: string | null;
+  image?: string;
+  /** Across the business. */
+  totalQuantity: number;
+  /** At the selected branch; null when no branch was requested. */
+  branchQuantity: number | null;
+  quantity: number;
+  status: "in_stock" | "low_stock" | "out_of_stock";
+  syncedFromZenoti: boolean;
+  zenotiSyncedAt?: string | null;
+};
+
+/** A clinical photograph in a patient's timeline (before / during / after). */
+export type PatientPhoto = {
+  _id: Id;
+  userId: Id;
+  bookingId?: (Booking & { referenceNumber?: string }) | Id | null;
+  consultationNoteId?: Id | null;
+  branchId?: Id | null;
+  phase: "before" | "during" | "after";
+  bodyArea?: string;
+  note?: string;
+  url: string;
+  takenAt: string;
+  takenByName?: string;
+  takenByRole?: string;
   createdAt?: string;
 };
 
@@ -726,6 +787,13 @@ export type DoctorAvailability = {
 };
 
 export type PreConsultForm = {
+  /** Presenting complaint, added 2026-09. Free text in the patient's own words. */
+  symptomDuration?: string | null;
+  previousTreatments?: string | null;
+  currentMedications?: string | null;
+  patientNotes?: string | null;
+  pregnancyStatus?: "not_applicable" | "not_pregnant" | "pregnant" | "breastfeeding" | "planning" | "prefer_not_to_say";
+  photos?: { url: string; caption?: string; uploadedAt?: string }[];
   _id: Id;
   userId: Id | User;
   bookingId?: Id | Booking;
@@ -769,14 +837,34 @@ export type ConsentForm = {
 
 export type PrescriptionItem = {
   medicine: string;
+  /** "500 mg", "0.1%" — strength, kept apart from the dose. */
+  strength?: string | null;
+  /** Tablet, cream, serum — as the clinic dispenses it. */
+  formulation?: string | null;
   dosage?: string | null;
   frequency?: string | null;
   duration?: string | null;
+  /** Morning / night / after food. */
+  timing?: string | null;
   instructions?: string | null;
+  /** Set when the line is a Zennara retail product rather than a drug. */
+  productId?: Id | null;
+  /** Availability when it was prescribed. Never a price. */
+  availableQuantity?: number | null;
   isScheduleH?: boolean;
 };
 
 export type ConsultationNote = {
+  /* Diagnosis and advice — the 2026-09 prescription builder. */
+  primaryDiagnosis?: string;
+  secondaryDiagnosis?: string;
+  skinCareAdvice?: string;
+  lifestyleAdvice?: string;
+  precautions?: string;
+  /** True only once a dermatologist has signed; sending requires it. */
+  prescriptionSigned?: boolean;
+  prescriptionSignedAt?: string | null;
+  prescriptionSignedByName?: string | null;
   /** Set once the signed prescription was emailed to the guest. */
   prescriptionEmailedAt?: string | null;
   prescriptionEmailedTo?: string | null;

@@ -6,10 +6,11 @@ import {
   Tags, TicketPercent, Truck, Boxes, Building2, Store, Star, BarChart3, ShieldCheck,
   Smartphone, MessageSquareText, CreditCard, BellRing, ToggleRight,
   ClipboardList, CalendarClock, MapPin, Search, Bell, ChevronDown,
-  ScrollText, IdCard, Mic, Pill, Receipt, FlaskConical, LifeBuoy, Loader2, CheckCheck, ArrowRight,
+  ScrollText, IdCard, Mic, Pill, Receipt, FlaskConical, LifeBuoy, Loader2, CheckCheck, ArrowRight, PackageSearch,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useStore, ROLE_LABEL, panelAccepts, wrongPanelMessage, type Role } from "./store";
+import { replayTour } from "./tours";
 import { useMyDoctor } from "./lib/useMe";
 import { Menu } from "./ui";
 import api from "./lib/api";
@@ -33,6 +34,7 @@ const NAV: NavGroup[] = [
     { to: "/doctor/month", label: "My month", icon: <BarChart3 className={ic} /> },
     { to: "/doctor/schedule", label: "My schedule", icon: <CalendarClock className={ic} /> },
     { to: "/doctor/availability", label: "My centres", icon: <MapPin className={ic} /> },
+    { to: "/doctor/stock", label: "Product availability", icon: <PackageSearch className={ic} /> },
     { to: "/doctor/profile", label: "My profile", icon: <IdCard className={ic} /> },
   ]},
 ];
@@ -269,6 +271,7 @@ export function Shell({ children }: { children: ReactNode }) {
               items={[
                 { label: <span><b>{who.name}</b><br /><span className="text-[11px] text-ink3">{who.role}{branchLabel ? ` · ${branchLabel}` : ""}</span></span> },
                 { label: "My profile", onClick: () => nav(role === "doctor" ? "/doctor/profile" : role === "therapist" ? "/floor/schedule" : "/roles") },
+                { label: "View tutorial again", onClick: () => { replayTour(); toast("Starting the walkthrough"); } },
                 { label: "Sign out", onClick: () => { logout(); toast("Signed out"); } },
               ]}
             />
