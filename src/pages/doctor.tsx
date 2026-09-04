@@ -1821,6 +1821,7 @@ export function ConsultationProgress({ booking, onChanged }: { booking: Booking;
 }
 
 export function StockPill({ status, qty }: { status: ProductAvailability["status"]; qty: number }) {
+  if (status === "available") return <Tag kind="info">Available</Tag>;
   if (status === "out_of_stock") return <Tag kind="err">Out of stock</Tag>;
   if (status === "low_stock") return <Tag kind="warn">Low · {qty} left</Tag>;
   return <Tag kind="ok">In stock · {qty}</Tag>;
@@ -1851,7 +1852,7 @@ export function ProductStock() {
           value={q} onChange={(e) => setQ(e.target.value)}
           placeholder="Search by name, SKU, brand or formulation"
           className="min-w-[240px] flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-[13px] outline-none focus:border-gold-dark" />
-        {([["", "All"], ["in_stock", "In stock"], ["low_stock", "Low"], ["out_of_stock", "Out"]] as [string, string][]).map(([v, label]) => (
+        {([["", "All"], ["in_stock", "In stock"], ["available", "Available"], ["low_stock", "Low"], ["out_of_stock", "Out"]] as [string, string][]).map(([v, label]) => (
           <button key={v || "all"} onClick={() => setStatus(v)}
             className={`rounded-lg px-3 py-2 text-[12px] font-semibold ${status === v ? "bg-primary text-white" : "border border-border bg-surface text-ink2"}`}>
             {label}

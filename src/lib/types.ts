@@ -505,7 +505,8 @@ export type ProductAvailability = {
   /** At the selected branch; null when no branch was requested. */
   branchQuantity: number | null;
   quantity: number;
-  status: "in_stock" | "low_stock" | "out_of_stock";
+  /** available = stock is not counted for this item (Zenoti exposes none); orderable, check the shelf. */
+  status: "in_stock" | "low_stock" | "out_of_stock" | "available";
   syncedFromZenoti: boolean;
   zenotiSyncedAt?: string | null;
 };
