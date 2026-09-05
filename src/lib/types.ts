@@ -11,6 +11,8 @@ export type Admin = {
   name: string;
   role: AdminRole;
   phone?: string | null;
+  /** Profile photo (S3 URL) shown in the top bar. */
+  photo?: string | null;
   isActive: boolean;
   lastLogin?: string;
   /** Explicit link to a Doctor profile for role `doctor` logins. */

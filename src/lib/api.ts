@@ -31,6 +31,9 @@ export const auth = {
       method: "POST", body: { email, otp }, anonymous: true,
     }),
   me: () => request<Admin>("/admin/auth/me"),
+  /** Self-service profile: name, phone, photo. Returns the refreshed account. */
+  updateMe: (body: { name?: string; phone?: string | null; photo?: string | null }) =>
+    request<Admin>("/admin/auth/me", { method: "PUT", body }),
   logout: () => requestRaw("/admin/auth/logout", { method: "POST" }),
   /** End every session for this account, on every device. */
   logoutEverywhere: () => requestRaw("/admin/auth/me/logout-all", { method: "POST" }),

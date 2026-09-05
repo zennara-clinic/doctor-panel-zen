@@ -264,13 +264,13 @@ export function Shell({ children }: { children: ReactNode }) {
           <div className="flex items-center gap-3">
             <Menu align="right"
               button={
-                <button className="grid h-7 w-7 place-items-center rounded-full bg-secondary text-[10.5px] font-bold text-white">
-                  {who.init}
+                <button className="grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-secondary text-[10.5px] font-bold text-white">
+                  {admin?.photo ? <img src={admin.photo} alt="" className="h-full w-full object-cover" /> : who.init}
                 </button>
               }
               items={[
                 { label: <span><b>{who.name}</b><br /><span className="text-[11px] text-ink3">{who.role}{branchLabel ? ` · ${branchLabel}` : ""}</span></span> },
-                { label: "My profile", onClick: () => nav(role === "doctor" ? "/doctor/profile" : role === "therapist" ? "/floor/schedule" : "/roles") },
+                { label: "My profile", onClick: () => nav("/doctor/profile") },
                 { label: "View tutorial again", onClick: () => { replayTour(); toast("Starting the walkthrough"); } },
                 { label: "Sign out", onClick: () => { logout(); toast("Signed out"); } },
               ]}
