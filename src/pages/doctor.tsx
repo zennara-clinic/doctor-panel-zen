@@ -794,6 +794,7 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
                     ["strength", "Strength"], ["formulation", "Form"],
                     ["dosage", "Dose"], ["frequency", "Frequency"],
                     ["duration", "Duration"], ["timing", "Timing"],
+                    ["refillAfterDays", "Refill after (days)"],
                   ] as [keyof PrescriptionItem, string][]).map(([k, label]) => (
                     <input key={String(k)} value={(m[k] as string) ?? ""} placeholder={label}
                       onChange={(e) => { setRx((r) => r.map((x, j) => (j === i ? { ...x, [k]: e.target.value } : x))); setDirty(true); }}

@@ -848,6 +848,8 @@ export type PrescriptionItem = {
   /** Morning / night / after food. */
   timing?: string | null;
   instructions?: string | null;
+  /** Days until a refill is due; the app derives it from `duration` when blank. */
+  refillAfterDays?: number | string | null;
   /** Set when the line is a Zennara retail product rather than a drug. */
   productId?: Id | null;
   /** Availability when it was prescribed. Never a price. */
