@@ -849,15 +849,24 @@ export function Today() {
     (provF === "All dermatologists" || bookingProvider(b) === provF) &&
     (stF === "All statuses" || statusKey(b) === stF.toLowerCase().replace(/[\s-]/g, "")));
 
-  const cellFor = (prov: string, t: string) =>
-    rows.find((b) => {
-      if (bookingProvider(b) !== prov) return false;
-      const d = bookingSlotDate(b);
-      if (!d) return false;
-      const hm = clinicHM(d);
-      const bucket = `${hm.slice(0, 2)}:${Number(hm.slice(3)) < 30 ? "00" : "30"}`;
-      return bucket === t;
-    });
+  // Every booking of this dermatologist that falls in the hour row starting at t.
+  // Rows are hourly (slotTimesFor), so a slot is placed in the latest row that
+  // starts at or before it; the old half-hour bucket had no row to land in for
+  // anything booked at :30–:59, and find() showed only the first of two guests
+  // booked in the same hour — the rest were silently hidden.
+  const rowFor = (hm: string) => {
+    let hit = SLOT_TIMES[0];
+    for (const s of SLOT_TIMES) if (s <= hm) hit = s;
+    return hit;
+  };
+  const cellsFor = (prov: string, t: string) =>
+    rows
+      .filter((b) => {
+        if (bookingProvider(b) !== prov) return false;
+        const d = bookingSlotDate(b);
+        return d ? rowFor(clinicHM(d)) === t : false;
+      })
+      .sort((a, b) => (bookingSlotDate(a)?.getTime() ?? 0) - (bookingSlotDate(b)?.getTime() ?? 0));
 
   const APK: Record<string, string> = {
     confirmed: "bg-ok-bg text-ok shadow-[inset_3px_0_0_var(--color-ok)]",
@@ -935,16 +944,19 @@ export function Today() {
                       <div key={t} className="grid min-h-[34px] border-b border-border last:border-0" style={{ gridTemplateColumns: `56px repeat(${providers.length},1fr)` }}>
                         <div className="border-r border-border p-1.5 font-mono text-[10px] text-ink3">{t}</div>
                         {providers.map((p) => {
-                          const bk = cellFor(p, t);
+                          const cell = cellsFor(p, t);
                           return (
-                            <div key={p} className="border-l border-border p-0.5">
-                              {bk && (
-                                <button onClick={() => setSel(bk._id)}
-                                  className={`block h-full w-full rounded px-2 py-1 text-left text-[10.5px] ${APK[statusKey(bk)] ?? "bg-dis-bg text-dis"}`}>
-                                  <b className="block text-[11px] font-bold">{bk.fullName}</b>
-                                  <span className="opacity-85">{bookingServiceName(bk, "").split("—")[0]}</span>
-                                </button>
-                              )}
+                            <div key={p} className="flex flex-col gap-0.5 border-l border-border p-0.5">
+                              {cell.map((bk) => {
+                                const d = bookingSlotDate(bk);
+                                return (
+                                  <button key={bk._id} onClick={() => setSel(bk._id)}
+                                    className={`block w-full rounded px-2 py-1 text-left text-[10.5px] ${APK[statusKey(bk)] ?? "bg-dis-bg text-dis"}`}>
+                                    <b className="block text-[11px] font-bold">{bk.fullName}</b>
+                                    <span className="opacity-85">{d ? `${clinicHM(d)} · ` : ""}{bookingServiceName(bk, "").split("—")[0]}</span>
+                                  </button>
+                                );
+                              })}
                             </div>
                           );
                         })}
