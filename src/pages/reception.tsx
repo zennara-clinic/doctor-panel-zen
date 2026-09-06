@@ -987,13 +987,14 @@ export function Today() {
                   {!kind && <div className="mb-1.5 flex items-baseline gap-2"><span className="text-[13px] font-extrabold">{title}</span><span className="text-[11.5px] text-ink3">{group.length}</span></div>}
                   {group.length === 0 ? <div className="rounded-lg border border-dashed border-border px-3 py-3 text-[12px] text-ink3">None on {fmtDate(day)}.</div> : (
                     <DataTable
-                      cols={["Guest", "Service", "Dermatologist", "When", "Payment", "Status"]}
+                      cols={["Guest", "Service", "Dermatologist", "When", "Stage", "Payment", "Status"]}
                       onRow={(i) => setSel(group[i]._id)}
                       rows={group.map((b) => [
                         <B key={b._id}>{b.fullName}</B>,
                         bookingServiceName(b),
                         b.specialistName || b.therapistName ? bookingProvider(b) : <span className="text-err">Not assigned</span>,
                         bookingSlotLabel(b),
+                        b.consultationStage ? <Tag kind={["consultation_completed", "prescription_created", "no_follow_up"].includes(b.consultationStage) ? "ok" : b.consultationStage === "consultation_started" ? "gold" : "info"}>{STAGE_LABEL[b.consultationStage] ?? b.consultationStage}</Tag> : <span className="text-ink3">—</span>,
                         b.paymentStatus === "paid" ? <Tag kind="ok">Paid</Tag> : <Tag kind="warn">{fmtINR(b.amount)}</Tag>,
                         STATUS[statusKey(b)],
                       ])}

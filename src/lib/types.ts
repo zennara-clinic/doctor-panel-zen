@@ -6,6 +6,9 @@ export type Id = string;
 /** Three roles, three panels. Finer-grained admin permissions come later. */
 export type AdminRole = "super_admin" | "doctor" | "therapist";
 export type Admin = {
+  /** True after an admin-issued temporary password until the person picks their own. */
+  mustChangePassword?: boolean;
+  hasPassword?: boolean;
   _id: Id;
   email: string;
   name: string;
@@ -507,6 +510,9 @@ export type ProductAvailability = {
   quantity: number;
   /** available = stock is not counted for this item (Zenoti exposes none); orderable, check the shelf. */
   status: "in_stock" | "low_stock" | "out_of_stock" | "available";
+  /** Prescription (Schedule H) product, as flagged in the clinic's master. */
+  isRx?: boolean | null;
+  rxReason?: string | null;
   syncedFromZenoti: boolean;
   zenotiSyncedAt?: string | null;
 };

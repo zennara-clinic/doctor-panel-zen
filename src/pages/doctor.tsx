@@ -274,6 +274,18 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
    * (see ROLE_BASELINES in the backend's config/permissions.js), because that
    * list carries buying and selling prices in every row.
    */
+  // Guest's live packages, so the dermatologist sees what is already paid for before assigning more.
+  const guestPkgs = useApi(() => (userId ? api.packageAssignments.list({ userId, status: "Active", limit: 20 }).then((r) => r.data ?? []).catch(() => []) : Promise.resolve([])), [userId]);
+  /** Add a medicine and flag Schedule H automatically when the clinic's product master marks it Rx. */
+  const addRx = (name: string) => {
+    const medicine = name.trim(); if (!medicine) return;
+    setRx((r) => [...r, { medicine, isScheduleH: false }]); setRxQ(""); setDirty(true);
+    api.productAvailability.list({ search: medicine, limit: 5 }).then((res) => {
+      const rows = res.data ?? [];
+      const hit = rows.find((p) => p.name.toLowerCase() === medicine.toLowerCase()) ?? rows.find((p) => p.name.toLowerCase().startsWith(medicine.toLowerCase()));
+      if (hit?.isRx) setRx((r) => r.map((x) => (x.medicine === medicine ? { ...x, isScheduleH: true } : x)));
+    }).catch(() => undefined);
+  };
   const rxSuggest = useApi(
     () => (rxSearch.trim().length >= 2
       ? api.productAvailability.list({ search: rxSearch.trim(), limit: 6 })
@@ -711,6 +723,17 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
                 </span>
               </div>
             ))}
+            {(guestPkgs.data ?? []).length > 0 && (
+              <div className="mt-2 rounded-lg border border-border bg-ivory px-2.5 py-2">
+                <div className="text-[10.5px] font-bold uppercase tracking-wider text-ink3">Already on a package</div>
+                {(guestPkgs.data ?? []).map((p) => {
+                  const entitled = (p.packageDetails?.services ?? []).reduce((n, s) => n + (Number(s.sessions) || 1), 0);
+                  const used = (p.sessions ?? []).filter((s) => s.status === "Completed").length;
+                  return <div key={p._id} className="mt-1 flex items-center justify-between gap-2 text-[12px]"><span className="min-w-0 truncate font-semibold">{p.packageDetails?.packageName}</span><span className="shrink-0 text-ink3">{Math.max(0, entitled - used)}/{entitled} left{p.validUntil ? ` · to ${new Date(p.validUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}</span></div>;
+                })}
+                <div className="mt-1 text-[10.5px] text-ink3">Reception redeems a session from these on the bill — no need to assign the same treatment again.</div>
+              </div>
+            )}
             {assigned.length > 0 && (
               <Note className="mb-0 text-[11px]">Assignments are stored on the note. Billing and package sessions are still created by reception from the guest's record.</Note>
             )}
@@ -744,16 +767,11 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
             )}
             <div className="mb-2 flex gap-2">
               <input value={rxQ} onChange={(e) => setRxQ(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && rxQ.trim()) {
-                    setRx((r) => [...r, { medicine: rxQ.trim(), isScheduleH: false }]);
-                    setRxQ(""); setDirty(true);
-                  }
-                }}
+                onKeyDown={(e) => { if (e.key === "Enter" && rxQ.trim()) addRx(rxQ); }}
                 placeholder="Type a medicine and press Enter"
                 className="min-w-0 flex-1 rounded-lg border border-border bg-ivory px-2.5 py-2 text-[12.5px] outline-none focus:border-gold-dark" />
               <Btn kind="ghost" className="!px-2.5 !py-1.5 !text-[11.5px]" disabled={!rxQ.trim()}
-                onClick={() => { setRx((r) => [...r, { medicine: rxQ.trim(), isScheduleH: false }]); setRxQ(""); setDirty(true); }}>Add</Btn>
+                onClick={() => addRx(rxQ)}>Add</Btn>
             </div>
 
             {(rxSuggest.data ?? []).length > 0 && (
@@ -763,7 +781,7 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
                     // A Zennara product carries its id and the stock at the
                     // moment of prescribing (quantity only — never a price).
                     setRx((r) => [...r, {
-                      medicine: pr.name, isScheduleH: false,
+                      medicine: pr.name, isScheduleH: pr.isRx === true,
                       formulation: pr.formulation ?? null,
                       productId: pr.source === "product" ? pr._id : null,
                       availableQuantity: pr.quantity,

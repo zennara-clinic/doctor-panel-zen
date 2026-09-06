@@ -18,10 +18,19 @@ import type { VisitCodeLog } from "./types";
 
 /* ============================ auth ============================ */
 export const auth = {
+  /** Is this address a panel account, and does it have a password set? */
   checkEmail: (email: string) =>
-    requestRaw<{ authorized: boolean }>("/admin/auth/check-email", {
+    request<{ isAuthorized: boolean; hasPassword: boolean; methods: ("password" | "otp")[] }>("/admin/auth/check-email", {
       method: "POST", body: { email }, anonymous: true,
     }),
+  /** Email + password, for accounts an administrator has given a password. */
+  loginPassword: (email: string, password: string) =>
+    request<{ token: string; admin: Admin; expiresAt: string }>("/admin/auth/login-password", {
+      method: "POST", body: { email, password }, anonymous: true,
+    }),
+  /** Pick or change my own password. Returns a fresh session. */
+  changePassword: (body: { currentPassword?: string; newPassword: string }) =>
+    request<{ token: string; admin: Admin; expiresAt: string }>("/admin/auth/me/password", { method: "PUT", body }),
   requestOtp: (email: string) =>
     requestRaw("/admin/auth/login", { method: "POST", body: { email }, anonymous: true }),
   resendOtp: (email: string) =>

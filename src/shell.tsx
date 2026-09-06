@@ -186,6 +186,12 @@ export function Shell({ children }: { children: ReactNode }) {
     return <LoginPage onSignedIn={(token, me, exp) => { signIn(token, me, exp); nav(HOME); }} />;
   }
 
+  // A temporary password issued by an administrator must be replaced before
+  // the panel opens.
+  if (admin?.mustChangePassword) {
+    return <ChoosePasswordPage label="Dermatologist panel" onDone={(token, me, exp) => signIn(token, me, exp)} />;
+  }
+
   const who = {
     init: initials(admin?.name || admin?.email),
     name: admin?.name || admin?.email || "Signed in",
@@ -286,8 +292,9 @@ export function Shell({ children }: { children: ReactNode }) {
 
 /* ================= login ================= */
 function LoginPage({ onSignedIn }: { onSignedIn: (token: string, admin: Admin, expiresAt?: string) => void }) {
-  const [step, setStep] = useState<"email" | "otp">("email");
+  const [step, setStep] = useState<"email" | "password" | "otp">("email");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -308,6 +315,27 @@ function LoginPage({ onSignedIn }: { onSignedIn: (token: string, admin: Admin, e
     setBusy(true); setError(null);
     try { await api.auth.requestOtp(addr); setStep("otp"); setCooldown(30); }
     catch (err) { fail(err); } finally { setBusy(false); }
+  };
+
+  // Accounts with a password get the password box; everyone else goes
+  // straight to the emailed code (both stay available either way).
+  const continueFromEmail = async () => {
+    if (!/^\S+@\S+\.\S+$/.test(addr)) { setError("Enter a valid email address"); return; }
+    setBusy(true); setError(null);
+    const info = await api.auth.checkEmail(addr).catch(() => null);
+    if (info && info.hasPassword) { setStep("password"); setBusy(false); return; }
+    setBusy(false);
+    await sendOtp();
+  };
+
+  const signInWithPassword = async () => {
+    if (!password) { setError("Enter your password"); return; }
+    setBusy(true); setError(null);
+    try {
+      const res = await api.auth.loginPassword(addr, password);
+      if (!panelAccepts(res.admin.role)) { setError(wrongPanelMessage(res.admin.role)); setPassword(""); return; }
+      onSignedIn(res.token, res.admin, res.expiresAt);
+    } catch (err) { fail(err); } finally { setBusy(false); }
   };
 
   const resend = async () => {
@@ -338,10 +366,10 @@ function LoginPage({ onSignedIn }: { onSignedIn: (token: string, admin: Admin, e
         <div className="mt-8 rounded-3xl bg-surface p-8 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.45)]">
           <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-ink3">Dermatologist panel</div>
           <h1 className="mt-1.5 text-[24px] font-extrabold leading-tight tracking-tight text-ink">
-            {step === "email" ? "Sign in" : "Enter your code"}
+            {step === "email" ? "Sign in" : step === "password" ? "Your password" : "Enter your code"}
           </h1>
           <p className="mt-1 text-[13px] text-ink3">
-            {step === "email" ? "We’ll email you a one-time code." : <>Sent to <span className="font-semibold text-ink2">{addr}</span></>}
+            {step === "email" ? "Your work email, then your password or a one-time code." : <>Signing in as <span className="font-semibold text-ink2">{addr}</span></>}
           </p>
 
           <div className="mt-6 grid gap-3">
@@ -349,11 +377,30 @@ function LoginPage({ onSignedIn }: { onSignedIn: (token: string, admin: Admin, e
               <>
                 <input id="login-email" autoFocus value={email} type="email" autoComplete="email" aria-label="Email"
                   onChange={(e) => { setEmail(e.target.value); setError(null); }}
-                  onKeyDown={(e) => e.key === "Enter" && !busy && sendOtp()}
+                  onKeyDown={(e) => e.key === "Enter" && !busy && continueFromEmail()}
                   placeholder="you@zennara.in" className={field} />
-                <button onClick={sendOtp} disabled={busy} className={primary}>
+                <button onClick={continueFromEmail} disabled={busy} className={primary}>
                   {busy && <Loader2 className="h-4 w-4 animate-spin" />} Continue
                 </button>
+              </>
+            ) : step === "password" ? (
+              <>
+                <input id="login-password" autoFocus value={password} type="password" autoComplete="current-password" aria-label="Password"
+                  onChange={(e) => { setPassword(e.target.value); setError(null); }}
+                  onKeyDown={(e) => e.key === "Enter" && !busy && signInWithPassword()}
+                  placeholder="Password" className={field} />
+                <button onClick={signInWithPassword} disabled={busy || !password} className={primary}>
+                  {busy && <Loader2 className="h-4 w-4 animate-spin" />} Sign in
+                </button>
+                <div className="flex items-center justify-between pt-1 text-[12.5px]">
+                  <button className="font-semibold text-ink3 transition-colors hover:text-ink"
+                    onClick={() => { setStep("email"); setPassword(""); setError(null); }}>
+                    Use another email
+                  </button>
+                  <button className="font-semibold text-primary" disabled={busy} onClick={sendOtp}>
+                    Email me a code instead
+                  </button>
+                </div>
               </>
             ) : (
               <>
@@ -376,6 +423,47 @@ function LoginPage({ onSignedIn }: { onSignedIn: (token: string, admin: Admin, e
                 </div>
               </>
             )}
+            {error && <p role="alert" className="text-[12.5px] font-semibold text-err">{error}</p>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/* ================= choose my own password (after a temporary one) ================= */
+function ChoosePasswordPage({ label, onDone }: { label: string; onDone: (token: string, admin: Admin, expiresAt?: string) => void }) {
+  const [next, setNext] = useState("");
+  const [again, setAgain] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const field = "w-full rounded-xl border border-border bg-ivory px-4 py-3 text-[14px] text-ink outline-none transition-colors placeholder:text-ink3/60 focus:border-primary focus:bg-surface";
+  const primary = "flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-[14px] font-bold text-white transition-colors hover:bg-primary-hover disabled:bg-dis-bg disabled:text-dis";
+  const submit = async () => {
+    if (next.length < 8) { setError("Use at least 8 characters."); return; }
+    if (next !== again) { setError("The two passwords do not match."); return; }
+    setBusy(true); setError(null);
+    try { const res = await api.auth.changePassword({ newPassword: next }); onDone(res.token, res.admin, res.expiresAt); }
+    catch (err) { setError(err instanceof ApiError ? err.message : (err as Error)?.message ?? "Something went wrong"); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-side px-6 py-12">
+      <div className="w-full max-w-[380px]">
+        <img src={logo} alt="Zennara" className="mx-auto h-20 w-auto object-contain" />
+        <div className="mt-8 rounded-3xl bg-surface p-8 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.45)]">
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-ink3">{label}</div>
+          <h1 className="mt-1.5 text-[24px] font-extrabold leading-tight tracking-tight text-ink">Choose your password</h1>
+          <p className="mt-1 text-[13px] text-ink3">You signed in with a temporary password. Pick your own to continue.</p>
+          <div className="mt-6 grid gap-3">
+            <input autoFocus value={next} type="password" autoComplete="new-password" aria-label="New password" placeholder="New password (8+ characters)"
+              onChange={(e) => { setNext(e.target.value); setError(null); }} className={field} />
+            <input value={again} type="password" autoComplete="new-password" aria-label="New password again" placeholder="New password again"
+              onChange={(e) => { setAgain(e.target.value); setError(null); }} onKeyDown={(e) => e.key === "Enter" && !busy && submit()} className={field} />
+            <button onClick={submit} disabled={busy || !next || !again} className={primary}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />} Save password
+            </button>
             {error && <p role="alert" className="text-[12.5px] font-semibold text-err">{error}</p>}
           </div>
         </div>
