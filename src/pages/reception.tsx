@@ -391,17 +391,24 @@ function BookingDrawer({ id, onClose, onChanged }: {
               <LifecycleActions
                 state={life.state}
                 busy={act.busy}
-                extraFor={(action) => (action === "check_in"
+                extraFor={(action) => (action === "confirm" || action === "check_in"
                   ? {
                       node: <DermPicker booking={bk} value={derm} onChange={setDerm} />,
-                      blocked: dermReady(bk, derm) ? null : "Assign a dermatologist before checking the guest in.",
+                      blocked: dermReady(bk, derm)
+                        ? null
+                        : action === "confirm"
+                          // A treatment arrives with nobody assigned — the app
+                          // asks the guest for a service, a date and a time,
+                          // never a dermatologist. The desk decides here.
+                          ? "Choose who is running this appointment before confirming it."
+                          : "Assign a dermatologist before checking the guest in.",
                     }
                   : undefined)}
                 onRun={(action, over) => act.run(
                   () => api.bookings.lifecycle(bk._id, {
                     action,
                     ...over,
-                    ...(action === "check_in" ? dermBody(derm) ?? {} : {}),
+                    ...(action === "confirm" || action === "check_in" ? dermBody(derm) ?? {} : {}),
                   }).then(() => audit(
                     action === "check_in" ? "BOOKING_CHECKED_IN" : action === "complete" ? "BOOKING_CHECKED_OUT" : "BOOKING_UPDATED",
                     `${bk.fullName} · ${action}${over.reason ? ` — ${over.reason}` : ""}`,
