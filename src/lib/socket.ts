@@ -46,3 +46,30 @@ export type ChatUpdate = {
 export type TypingEvent = { chatId: string; userId: string; userName: string; userType: "user" | "admin" };
 export type PresenceEvent = { chatId: string; userId: string; userName?: string; online: boolean; lastSeen?: string };
 export type DeletedEvent = { messageId: string; chatId: string };
+
+/**
+ * An appointment moved — someone checked a guest in, started or completed a
+ * session, or Zenoti's own change came back through the two-minute reconcile.
+ *
+ * Broadcast to every signed-in staff socket so the day book and the booking
+ * lists redraw at once. The payload is deliberately thin: clients re-read the
+ * booking rather than trusting a broadcast to be complete.
+ */
+export type BookingUpdate = {
+  bookingId: string;
+  status: string;
+  action?: string | null;
+  referenceNumber?: string;
+  at: string;
+};
+
+/**
+ * Subscribe to appointment changes. Returns an unsubscribe function; safe to
+ * call when there is no socket yet (returns a no-op).
+ */
+export function onBookingUpdate(handler: (u: BookingUpdate) => void): () => void {
+  const s = getSocket();
+  if (!s) return () => undefined;
+  s.on("booking:updated", handler);
+  return () => { s.off("booking:updated", handler); };
+}

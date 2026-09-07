@@ -147,13 +147,60 @@ export type BookingStatus =
   | "Awaiting Confirmation"
   | "Confirmed"
   | "Rescheduled"
+  /** The guest is at the clinic but not yet in a room — Zenoti's status 2. */
+  | "Checked In"
+  /** The service is being delivered — Zenoti's "In service" (4). */
   | "In Progress"
   | "Cancelled"
   | "No Show"
   | "Completed";
 
-export type VisitCodeLog = { kind: "checkin" | "checkout"; channels: string[]; failed?: string[]; at: string; byName?: string | null };
-export type ManualCheck = { reason: string; byName?: string | null; at: string };
+/** The desk actions, exactly as the backend lifecycle service names them. */
+export type LifecycleAction =
+  | "confirm" | "check_in" | "undo_check_in" | "start" | "undo_start"
+  | "complete" | "undo_complete" | "no_show" | "undo_no_show"
+  | "cancel" | "undo_cancel";
+
+/** One action offered for a booking right now, as the server computed it. */
+export type LifecycleOption = {
+  action: LifecycleAction;
+  label: string;
+  /** The desk must type a reason before this goes through. */
+  needsReason?: boolean;
+  /** Outside its allowed time window (check-in before the slot opens). */
+  blocked?: boolean;
+  blockedReason?: string | null;
+  opensAt?: string | null;
+  /** Staff may push past `blocked` by supplying a reason. */
+  overridable?: boolean;
+  /** Zenoti has no equivalent call — this corrects our record only. */
+  localOnly?: boolean;
+};
+
+export type LifecycleState = {
+  status: BookingStatus;
+  actions: LifecycleOption[];
+  checkInWindow: { ok: boolean; opensAt: string | null; closesAt: string | null; reason?: string | null; code?: string };
+  earlyMinutes: number;
+  statusLog?: StatusLogEntry[];
+};
+
+/** One recorded move in an appointment's life. */
+export type StatusLogEntry = {
+  action: string;
+  from?: string | null;
+  to?: string | null;
+  at: string;
+  byName?: string | null;
+  reason?: string | null;
+  /** True when staff overrode the check-in window. */
+  overrode?: boolean;
+  via?: "panel" | "app" | "zenoti" | "system";
+  /** What Zenoti did with it. */
+  zenoti?: "synced" | "failed" | "skipped" | "dryrun" | "off" | null;
+  zenotiError?: string | null;
+};
+
 
 export type ConsultationStage =
   | "booked" | "confirmed" | "checked_in" | "waiting" | "consultation_started"
@@ -166,13 +213,8 @@ export type Booking = {
   assignedTherapistName?: string | null;
   _id: Id;
   isPackageIncluded?: boolean;
-  checkInCodeAt?: string | null;
-  checkOutCodeAt?: string | null;
-  checkInCodeSentAt?: string | null;
-  checkOutCodeSentAt?: string | null;
-  visitCodeLog?: VisitCodeLog[];
-  manualCheckIn?: ManualCheck | null;
-  manualCheckOut?: ManualCheck | null;
+  /** Every desk decision that moved this appointment, oldest first. */
+  statusLog?: StatusLogEntry[];
   referenceNumber?: string;
   userId: Id | User;
   consultationId?: Id | Consultation | null;

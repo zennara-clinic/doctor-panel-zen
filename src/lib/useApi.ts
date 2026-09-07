@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { onBookingUpdate } from "./socket";
 import { ApiError } from "./http";
 
 export type Query<T> = {
@@ -110,9 +111,9 @@ export function useMutation<Args extends unknown[], R>(fn: (...args: Args) => Pr
 /**
  * Re-runs a query's `reload` on an interval while the tab is visible.
  *
- * The chat and floor screens need to see new activity without a manual
- * refresh; the backend's Socket.IO channel is not wired into the panel, so
- * these screens poll.
+ * A safety net beneath the live socket feed (see `useBookingUpdates`): if the
+ * websocket drops, or a screen has no live channel of its own, it still
+ * catches up on its own.
  */
 export function usePoll(reload: () => void, ms = 8000, enabled = true) {
   useEffect(() => {
@@ -123,6 +124,30 @@ export function usePoll(reload: () => void, ms = 8000, enabled = true) {
     const id = setInterval(tick, ms);
     return () => clearInterval(id);
   }, [reload, ms, enabled]);
+}
+
+/**
+ * Redraw when an appointment moves anywhere in the clinic.
+ *
+ * The desk, the floor tablet and Zenoti's own reconcile all change bookings
+ * out from under whoever is looking at a list. The server broadcasts every
+ * change to signed-in staff, so a check-in on the front desk appears on the
+ * day book immediately rather than at the next poll — which is what "in step
+ * with Zenoti" has to mean during a live clinic day.
+ *
+ * Reloads are coalesced: a burst of updates (a multi-service visit completing)
+ * costs one refetch.
+ */
+export function useBookingUpdates(reload: () => void, enabled = true) {
+  useEffect(() => {
+    if (!enabled) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const off = onBookingUpdate(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; reload(); }, 300);
+    });
+    return () => { if (timer) clearTimeout(timer); off(); };
+  }, [reload, enabled]);
 }
 
 /** Debounced value — used for search boxes that hit the API on every keystroke. */

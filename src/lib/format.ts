@@ -86,28 +86,62 @@ export function clinicMonthEnd(key: string = isoDay()): string {
 /** Weekday of a written clinic day (0 = Sunday), independent of the browser. */
 export const clinicWeekday = (key: string) => dayKeyDate(key).getUTCDay();
 
+/**
+ * Every browser's ICU spells September as "Sept" in en-IN/en-GB, which reads
+ * as a typo next to the other three-letter months. One pass keeps the panel's
+ * months uniform whatever the staff laptop's ICU build does.
+ */
+const shortenMonths = (s: string) => s.replace(/\bSept\b/g, "Sep");
+
 /** Format a date-only key without interpreting it as a UTC or local instant. */
 export function fmtDayKey(
   key: string,
   options: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" },
 ): string {
-  return new Intl.DateTimeFormat("en-IN", { ...options, timeZone: "UTC" }).format(dayKeyDate(key));
+  return shortenMonths(new Intl.DateTimeFormat("en-IN", { ...options, timeZone: "UTC" }).format(dayKeyDate(key)));
 }
 
 export const isSameDay = (a: Date | null, b: Date | null) => !!a && !!b && isoDay(a) === isoDay(b);
 
+/**
+ * "3 Sep 2026" — the panel's one date format.
+ *
+ * The year is never dropped. A bare "3 Sep" is ambiguous the moment a list
+ * mixes years (past visits, package expiry, invoice history), and staff had no
+ * way to tell which one a row meant.
+ */
 export function fmtDate(v: string | Date | undefined | null): string {
   const d = toDate(v);
   if (!d) return "—";
   const c = clinicParts(d);
-  return `${c.d} ${MONTHS[c.m - 1]}`;
+  return `${c.d} ${MONTHS[c.m - 1]} ${c.y}`;
 }
 
-export function fmtDateFull(v: string | Date | undefined | null): string {
+/** Alias kept for call sites that asked for the year explicitly. */
+export const fmtDateFull = fmtDate;
+
+/** "3 Sep '26" — same information, for chart ticks and other tight columns. */
+export function fmtDateCompact(v: string | Date | undefined | null): string {
   const d = toDate(v);
   if (!d) return "—";
   const c = clinicParts(d);
-  return `${c.d} ${MONTHS[c.m - 1]} ${c.y}`;
+  return `${c.d} ${MONTHS[c.m - 1]} '${String(c.y).slice(-2)}`;
+}
+
+/** "Wednesday, 3 Sep 2026" — page headers and day pickers. */
+export function fmtDateLong(v: string | Date | undefined | null): string {
+  const d = toDate(v);
+  if (!d) return "—";
+  return shortenMonths(new Intl.DateTimeFormat("en-IN", {
+    timeZone: CLINIC_TZ, weekday: "long", day: "numeric", month: "short", year: "numeric",
+  }).format(d));
+}
+
+/** "3 Sep 2026 · 11:30" — an instant, stated in full. */
+export function fmtDateTime(v: string | Date | undefined | null): string {
+  const d = toDate(v);
+  if (!d) return "—";
+  return `${fmtDate(d)} · ${fmtTime(d)}`;
 }
 
 export function fmtTime(v: string | Date | undefined | null): string {
@@ -159,12 +193,15 @@ export function ageFrom(dob: string | Date | undefined | null): number | null {
 
 /* ---------------- booking status ---------------- */
 /** UI keys used by the STATUS tag map in ui.tsx. */
-export type StatusKey = "pending" | "confirmed" | "rescheduled" | "inprogress" | "completed" | "cancelled" | "noshow" | "late";
+export type StatusKey = "pending" | "confirmed" | "rescheduled" | "checkedin" | "inprogress" | "completed" | "cancelled" | "noshow" | "late";
 
 const STATUS_TO_KEY: Record<BookingStatus, StatusKey> = {
   "Awaiting Confirmation": "pending",
   Confirmed: "confirmed",
   Rescheduled: "rescheduled",
+  // Zenoti keeps "checked in" (the guest is here) apart from "in service"
+  // (they're in a room) — the floor needs to see the difference too.
+  "Checked In": "checkedin",
   "In Progress": "inprogress",
   Cancelled: "cancelled",
   "No Show": "noshow",

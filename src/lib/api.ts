@@ -13,8 +13,8 @@ import type {
   DoctorFeeRequest, Formulation, MyFee, ScheduleDay, SlotDay,
   Id, Inventory, Notification, Package, PackageAssignment, PreConsultForm, Product, ProductOrder,
   PatientPhoto, ProductAvailability, ProductReview, ServiceCard, ServiceReview, ServiceType, SupportMessage, TaxonomyTree, User, Vendor,
+  LifecycleAction, LifecycleState,
 } from "./types";
-import type { VisitCodeLog } from "./types";
 
 /* ============================ auth ============================ */
 export const auth = {
@@ -134,16 +134,22 @@ export const bookings = {
     request<{ _id: Id; consultationStage: ConsultationStage | null; followUp?: Booking["followUp"] }>(`/bookings/admin/${id}/stage`, { method: "PATCH", body }),
   /** Same filters as `list`; returns labelled rows for CSV. `fields` trims columns. */
   export: (q?: Query) => request<Record<string, unknown>[]>("/bookings/admin/export", { query: q }),
-  /** Staff send/resend the guest's check-in or check-out code (email / whatsapp / both). */
-  sendVisitCode: (id: Id, body: { kind: "checkin" | "checkout"; channel: "email" | "whatsapp" | "both"; regenerate?: boolean }) =>
-    request<{ kind: string; delivered: string[]; failed: { channel: string; reason: string }[]; sentAt: string; log: VisitCodeLog[] }>(`/bookings/admin/${id}/visit-code`, { method: "POST", body }),
-  /** Manual (no-code) check-in/out — requires a reason, recorded on the booking. */
-  manualCheckIn: (id: Id, reason: string, derm?: DermPick) => request<Booking>(`/bookings/admin/${id}/checkin`, { method: "PUT", body: { reason, ...derm } }),
+  /**
+   * Run one desk action on an appointment: check_in, undo_check_in, start,
+   * undo_start, complete, undo_complete, no_show, undo_no_show, cancel,
+   * undo_cancel, confirm.
+   *
+   * The server owns which actions are legal from the current status, the
+   * check-in time window, and the Zenoti call each one makes — the panel only
+   * names the action. Send `force` with a `reason` to check a guest in before
+   * the window opens; the override is recorded on the booking.
+   */
+  lifecycle: (id: Id, body: { action: LifecycleAction; reason?: string; force?: boolean; session?: BookingSession; notes?: string } & Partial<DermPick>) =>
+    request<Booking>(`/bookings/admin/${id}/lifecycle`, { method: "POST", body }),
+  /** What this appointment can do right now, plus its full status history. */
+  lifecycleState: (id: Id) => request<LifecycleState>(`/bookings/admin/${id}/lifecycle`),
   /** Put a dermatologist on the booking — roster id or a custom name. */
   setDermatologist: (id: Id, derm: DermPick) => request<Booking>(`/bookings/admin/${id}/dermatologist`, { method: "PUT", body: derm }),
-  /** Admin-only: read the current code (support fallback; audited). */
-  revealVisitCode: (id: Id) => request<{ kind: "checkin" | "checkout"; code: string; generatedAt?: string | null; sentAt?: string | null }>(`/bookings/admin/${id}/visit-code`),
-  manualCheckOut: (id: Id, reason: string, session?: BookingSession) => request<Booking>(`/bookings/admin/${id}/checkout`, { method: "PUT", body: { reason, session } }),
   /**
    * Admin day-book / list. Filters: status, location|branchId, date (YYYY-MM-DD),
    * startDate/endDate, search, userId, specialistId, therapistId, page/limit.
@@ -162,14 +168,12 @@ export const bookings = {
     request<Booking>(`/bookings/admin/${id}/reject-reschedule`, { method: "PUT", body: {} }),
   confirm: (id: Id, body?: { confirmedDate?: string; confirmedTime?: string; adminNotes?: string }) =>
     request<Booking>(`/bookings/admin/${id}/confirm`, { method: "PUT", body: body ?? {} }),
-  checkIn: (id: Id) => request<Booking>(`/bookings/admin/${id}/checkin`, { method: "PUT" }),
-  checkOut: (id: Id, body?: { notes?: string; session?: BookingSession }) =>
-    request<Booking>(`/bookings/admin/${id}/checkout`, { method: "PUT", body: body ?? {} }),
-  /** OTP-gated: the guest reads the code from their app; staff enter it here. */
-  verifyCheckIn: (id: Id, code: string, derm?: DermPick) =>
-    request<Booking>(`/bookings/admin/${id}/verify-checkin`, { method: "PUT", body: { code, ...derm } }),
-  verifyCheckOut: (id: Id, code: string, notes?: string, session?: BookingSession) =>
-    request<Booking>(`/bookings/admin/${id}/verify-checkout`, { method: "PUT", body: { code, notes, session } }),
+  /** The guest has arrived. Blocked before the check-in window unless forced. */
+  checkIn: (id: Id, body?: { reason?: string; force?: boolean } & Partial<DermPick>) =>
+    request<Booking>(`/bookings/admin/${id}/lifecycle`, { method: "POST", body: { action: "check_in", ...(body ?? {}) } }),
+  /** Close the service — Zenoti's "completed", the desk's "check out". */
+  complete: (id: Id, body?: { notes?: string; session?: BookingSession }) =>
+    request<Booking>(`/bookings/admin/${id}/lifecycle`, { method: "POST", body: { action: "complete", ...(body ?? {}) } }),
   noShow: (id: Id, body?: { adminNotes?: string }) =>
     request<Booking>(`/bookings/admin/${id}/no-show`, { method: "PUT", body: body ?? {} }),
   cancel: (id: Id, reason: string) =>

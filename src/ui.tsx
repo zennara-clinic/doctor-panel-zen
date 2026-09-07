@@ -123,7 +123,8 @@ export function Tag({ kind, children }: { kind: TagKind; children: ReactNode }) 
 export const STATUS: Record<string, ReactNode> = {
   pending: <Tag kind="warn">Pending</Tag>, confirmed: <Tag kind="ok">Confirmed</Tag>,
   rescheduled: <Tag kind="gold">Reschedule requested</Tag>,
-  inprogress: <Tag kind="info">In progress</Tag>, completed: <Tag kind="ok">Completed</Tag>,
+  checkedin: <Tag kind="gold">Checked in</Tag>,
+  inprogress: <Tag kind="info">In session</Tag>, completed: <Tag kind="ok">Completed</Tag>,
   cancelled: <Tag kind="err">Cancelled</Tag>, noshow: <Tag kind="err">No-show</Tag>,
   late: <Tag kind="err">Late</Tag>,
 };

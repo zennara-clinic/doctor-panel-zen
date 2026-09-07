@@ -38,7 +38,7 @@ function key(d: Date) {
 
 const fromKey = dayKeyDate;
 
-const prettyDate = (k: string) => fmtDayKey(k, { weekday: "long", day: "numeric", month: "long" });
+const prettyDate = (k: string) => fmtDayKey(k, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
 /* -------------------------------------------------------------------------
  * Time range editor — one row per block of clinic time

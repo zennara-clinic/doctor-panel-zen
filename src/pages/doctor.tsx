@@ -4,6 +4,7 @@ import {
   Page, Btn, Tag, Stats, Card, DataTable, B, Note, Hint, In, Sel, Area, Switch, Toggle,
   SecH, Prog, Modal, AreaChart, ChartCard, HBars, Async, Empty, Loading, StaleBanner, Tabs, Otp, UploadField, MultiSelect,
 } from "../ui";
+import { LifecycleActions, LIFECYCLE_TOAST, StatusHistory, useLifecycle } from "../lifecycle";
 import { useStore } from "../store";
 import { useDictation } from "../dictate";
 import api from "../lib/api";
@@ -229,10 +230,7 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
   const [svcQ, setSvcQ] = useState("");
   const svcSearch = useDebounced(svcQ, 300);
   // Visit actions — OTP modals and the no-show/complete buttons.
-  const [otpOpen, setOtpOpen] = useState<"in" | "out" | null>(null);
-  const [manualMode, setManualMode] = useState(false);
   const [manualReason, setManualReason] = useState("");
-  const [sendBusy, setSendBusy] = useState(false);
   const [code, setCode] = useState("");
   const [visitBusy, setVisitBusy] = useState(false);
   const [visitErr, setVisitErr] = useState<string | null>(null);
@@ -247,6 +245,8 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
   };
 
   const booking = useApi(() => api.bookings.get(bookingId), [bookingId]);
+  // The desk actions this visit can take right now, straight from the server.
+  const life = useLifecycle(bookingId);
   const note = useApi(() => api.consultationNotes.forBooking(bookingId), [bookingId]);
 
   const userId = booking.data ? idOf(booking.data.userId) : "";
@@ -296,19 +296,9 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
 
   const visit = async (fn: () => Promise<unknown>, msg: string) => {
     setVisitBusy(true); setVisitErr(null);
-    try { await fn(); toast(msg); booking.reload(); return true; }
+    try { await fn(); toast(msg); booking.reload(); void life.reload(); return true; }
     catch (e) { setVisitErr((e as Error).message); return false; }
     finally { setVisitBusy(false); }
-  };
-
-  const sendCode = async (kind: "checkin" | "checkout", channel: "email" | "whatsapp") => {
-    if (!booking.data) return;
-    setSendBusy(true);
-    try {
-      const r = await api.bookings.sendVisitCode(booking.data._id, { kind, channel });
-      const sent = (r.delivered ?? []).join(" + ");
-      toast(sent ? `Code sent via ${sent}` : "Could not deliver the code — try another channel");
-    } catch (e) { toast((e as Error).message); } finally { setSendBusy(false); }
   };
 
   const services = useApi(
@@ -496,19 +486,22 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
             <div className="mb-2 flex flex-wrap items-center gap-2">{STATUS[statusKey(bk)]}{bk.checkInTime && <span className="text-[10.5px] text-ink3">in {fmtWhen(bk.checkInTime)}</span>}</div>
             {visitErr && <Note kind="crit" className="my-0 mb-2 text-[11.5px]">{visitErr}</Note>}
             <div className="grid gap-1.5">
-              {["Confirmed", "Rescheduled", "Awaiting Confirmation"].includes(bk.status) && (
-                <Btn disabled={visitBusy} onClick={() => { setCode(""); setVisitErr(null); setOtpOpen("in"); }}>Check in — guest code</Btn>
-              )}
-              {bk.status === "In Progress" && (
-                <Btn kind="gold" disabled={visitBusy} onClick={() => { setCode(""); setVisitErr(null); setOtpOpen("out"); }}>Check out — guest code</Btn>
-              )}
-              {["Confirmed", "Rescheduled", "Awaiting Confirmation"].includes(bk.status) && (
-                <Btn kind="ghost" disabled={visitBusy} onClick={() => visit(
-                  () => api.bookings.noShow(bk._id).then(() => audit("BOOKING_NO_SHOW", bk.fullName, { bookingId: bk._id })),
-                  "Marked as no-show")}>Mark no-show</Btn>
-              )}
+              {/* Same steps the front desk sees, and the same ones Zenoti holds. */}
+              <LifecycleActions
+                state={life.state}
+                busy={visitBusy}
+                onRun={(action, over) => visit(
+                  () => api.bookings.lifecycle(bk._id, { action, ...over }).then(() => audit(
+                    action === "check_in" ? "BOOKING_CHECKED_IN" : action === "complete" ? "BOOKING_CHECKED_OUT" : "BOOKING_UPDATED",
+                    `${bk.fullName} · ${action}${over.reason ? ` — ${over.reason}` : ""}`,
+                    { bookingId: bk._id },
+                  )),
+                  LIFECYCLE_TOAST[action],
+                )}
+              />
               {bk.status === "Completed" && <div className="text-[11.5px] text-ink3">Visit completed{bk.checkOutTime ? ` at ${fmtWhen(bk.checkOutTime)}` : ""}.</div>}
             </div>
+            <StatusHistory log={life.state?.statusLog ?? bk.statusLog} />
           </Card>
 
           <Card className="p-4">
@@ -729,7 +722,7 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
                 {(guestPkgs.data ?? []).map((p) => {
                   const entitled = (p.packageDetails?.services ?? []).reduce((n, s) => n + (Number(s.sessions) || 1), 0);
                   const used = (p.sessions ?? []).filter((s) => s.status === "Completed").length;
-                  return <div key={p._id} className="mt-1 flex items-center justify-between gap-2 text-[12px]"><span className="min-w-0 truncate font-semibold">{p.packageDetails?.packageName}</span><span className="shrink-0 text-ink3">{Math.max(0, entitled - used)}/{entitled} left{p.validUntil ? ` · to ${new Date(p.validUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}</span></div>;
+                  return <div key={p._id} className="mt-1 flex items-center justify-between gap-2 text-[12px]"><span className="min-w-0 truncate font-semibold">{p.packageDetails?.packageName}</span><span className="shrink-0 text-ink3">{Math.max(0, entitled - used)}/{entitled} left{p.validUntil ? ` · to ${fmtDate(p.validUntil)}` : ""}</span></div>;
                 })}
                 <div className="mt-1 text-[10.5px] text-ink3">Reception redeems a session from these on the bill — no need to assign the same treatment again.</div>
               </div>
@@ -849,64 +842,6 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
           </Card>
         </div>
       </div>
-
-      <Modal open={otpOpen !== null} onClose={() => { setOtpOpen(null); setManualMode(false); setManualReason(""); }}
-        title={otpOpen === "in" ? "Check in — enter the guest's code" : "Check out — enter the guest's code"}>
-        {!manualMode ? (
-          <>
-            <Note>Ask the guest for the 6-digit {otpOpen === "in" ? "check-in" : "check-out"} code on their Zennara
-              appointment screen. Don&rsquo;t have it? Resend it below.</Note>
-            <div className="mt-3"><Otp value={code} onChange={setCode} length={6} /></div>
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px]">
-              <span className="text-ink3">Resend code:</span>
-              <Btn kind="ghost" className="!px-2.5 !py-1 !text-[11.5px]" disabled={sendBusy}
-                onClick={() => sendCode(otpOpen === "in" ? "checkin" : "checkout", "email")}>Email</Btn>
-              <Btn kind="ghost" className="!px-2.5 !py-1 !text-[11.5px]" disabled={sendBusy}
-                onClick={() => sendCode(otpOpen === "in" ? "checkin" : "checkout", "whatsapp")}>WhatsApp</Btn>
-              <button className="ml-auto text-[11.5px] font-semibold text-ink3 underline-offset-2 hover:underline"
-                onClick={() => { setManualMode(true); setVisitErr(null); }}>
-                Guest can&rsquo;t receive a code?
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <Note kind="crit">Manual {otpOpen === "in" ? "check-in" : "check-out"} is recorded against your name on the
-              booking and in the audit log — the guest is notified it happened without a code.</Note>
-            <div className="mt-3">
-              <Area label="Reason (required)" value={manualReason} onChange={setManualReason} rows={2}
-                placeholder="e.g. No phone with them, email bouncing" />
-            </div>
-            <button className="mt-2 text-[11.5px] font-semibold text-ink3 underline-offset-2 hover:underline"
-              onClick={() => { setManualMode(false); setVisitErr(null); }}>← Back to code entry</button>
-          </>
-        )}
-        {visitErr && <Note kind="crit" className="mt-3">{visitErr}</Note>}
-        <div className="mt-4 flex justify-end gap-2">
-          <Btn kind="ghost" onClick={() => { setOtpOpen(null); setManualMode(false); setManualReason(""); }}>Back</Btn>
-          <Btn kind={otpOpen === "out" ? "gold" : "primary"}
-            disabled={visitBusy || (manualMode ? manualReason.trim().length < 3 : code.length < 6)}
-            onClick={async () => {
-              const kind = otpOpen;
-              const ok = await visit(async () => {
-                if (kind === "in") {
-                  if (manualMode) await api.bookings.manualCheckIn(bk._id, manualReason.trim());
-                  else await api.bookings.verifyCheckIn(bk._id, code);
-                  audit("BOOKING_CHECKED_IN", `${bk.fullName}${manualMode ? " · manual" : ""}`, { bookingId: bk._id });
-                } else {
-                  if (manualMode) await api.bookings.manualCheckOut(bk._id, manualReason.trim());
-                  else await api.bookings.verifyCheckOut(bk._id, code);
-                  audit("BOOKING_CHECKED_OUT", `${bk.fullName}${manualMode ? " · manual" : ""}`, { bookingId: bk._id });
-                }
-              }, kind === "in" ? `${bk.fullName} checked in` : "Visit completed");
-              if (ok) { setOtpOpen(null); setCode(""); setManualMode(false); setManualReason(""); }
-            }}>
-            {visitBusy ? "Working…" : manualMode
-              ? (otpOpen === "in" ? "Check in without code" : "Check out without code")
-              : (otpOpen === "in" ? "Check in" : "Check out")}
-          </Btn>
-        </div>
-      </Modal>
 
       <Modal open={sketchOpen} onClose={() => setSketchOpen(false)} title="Sketch pad — annotate treatment areas" wide>
         <SketchPad initial={sketch} onSave={(dataUrl) => {
@@ -1067,7 +1002,7 @@ export function MyMonth() {
       endDate.setUTCMonth(endDate.getUTCMonth() + 1, 1);
       const end = isoDay(endDate);
       trend.push({
-        label: fmtDayKey(start, { month: "short" }),
+        label: fmtDayKey(start, { month: "short", year: "2-digit" }),
         count: mine.filter((b) => {
           const day = isoDay(new Date(b.confirmedDate || b.preferredDate));
           return day >= start && day < end && b.status === "Completed";
