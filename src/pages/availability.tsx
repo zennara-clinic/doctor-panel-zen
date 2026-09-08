@@ -268,7 +268,7 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
         ) : (
           <Page
             title={forced ? (loaded.data?.dermatologist.name ?? "Working hours") : "My schedule"}
-            sub={zenotiPrimary ? "Live Zenoti working hours, leave and block-outs are what patients can book" : "Your usual week plus date-specific changes"}
+            sub={zenotiPrimary ? "Managed in Zenoti — read live here" : "Your usual week plus date-specific changes"}
             actions={canEdit ? (
               <>
                 {dirty && !error && <Tag kind="warn">unsaved changes</Tag>}
@@ -293,12 +293,31 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                 any day and <B>Save &amp; publish</B> to make the week your own.
               </Note>
             )}
-            {!canEdit && (
-              <Note className="mb-3">{zenotiPrimary ? (loaded.data?.authorityMessage || "Manage working hours, leave and block-outs in Zenoti. This panel reads them back live.") : "You can view this calendar, but only its owner or an admin can change it."}</Note>
+            {!canEdit && !zenotiPrimary && (
+              <Note className="mb-3">You can view this calendar, but only its owner or an admin can change it.</Note>
             )}
 
             <div className="grid items-start gap-3.5 xl:grid-cols-[minmax(0,1fr)_390px]">
               {/* ------------------------- the normal week ------------------ */}
+              {zenotiPrimary ? (
+                /*
+                 * Zenoti owns this week, so there is nothing here to edit.
+                 *
+                 * The editor used to render anyway, fed by a BLANK local
+                 * schedule (the API deliberately returns one for a linked
+                 * doctor) — so every day read "Not working" while Zenoti had
+                 * them on 10:00-19:00. A disabled control showing the wrong
+                 * answer is worse than no control.
+                 */
+                <Card className="min-w-0 p-4">
+                  <SecH t="Working hours, leave & block-outs" right={<Tag kind="info">Managed in Zenoti</Tag>} />
+                  <p className="text-[12.5px] leading-relaxed text-ink2">
+                    Set them in Zenoti. This panel reads them back live — the calendar
+                    opposite is what patients can actually book, and updates on its own
+                    within about ten seconds of a change.
+                  </p>
+                </Card>
+              ) : (
               <Card className="min-w-0 p-4">
                 <SecH t="Your usual week" em="· days without hours are not bookable"
                   right={canEdit ? (
@@ -348,9 +367,10 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                   })}
                 </div>
               </Card>
-
+              )}
               <div className="grid gap-3.5">
                 {/* ---------------------------- rules ---------------------- */}
+                {!zenotiPrimary && (
                 <Card className="p-4">
                   <SecH t="Booking rules" />
                   <div className="grid gap-3">
@@ -379,10 +399,11 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                     <div className="text-[11px] text-ink3">Appointments are fixed at {SESSION_SLOT_MINUTES} minutes across the clinic.</div>
                   </div>
                 </Card>
+                )}
 
                 {/* --------------------------- the month ---------------------- */}
                 <Card className="p-4">
-                  <SecH t="Specific dates" em="· leave & one-off hours"
+                  <SecH t="Specific dates" em={zenotiPrimary ? "· leave & hours from Zenoti" : "· leave & one-off hours"}
                     right={
                       <div className="flex items-center gap-1">
                         <button onClick={() => setMonth(new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() - 1, 1, 12)))}
