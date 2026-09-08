@@ -1,3 +1,4 @@
+import { Check, Pencil } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -658,7 +659,7 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
                   ))}
                   <button onClick={() => setSketchOpen(true)}
                     className="rounded-full border border-dashed border-gold-dark px-2.5 py-1 text-[11px] font-bold text-gold-dark">
-                    ✎ {sketch ? "Edit sketch" : "Open sketch pad"}
+                    <span className="inline-flex items-center gap-1.5"><Pencil size={12} />{sketch ? "Edit sketch" : "Open sketch pad"}</span>
                   </button>
                 </div>
               </div>
@@ -754,8 +755,8 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
                 </Btn>
               </span>} />
             {completed && note.data?.prescriptionEmailedAt && (
-              <div className="mb-2 text-[11px] text-ok">
-                ✓ Emailed to {note.data.prescriptionEmailedTo ?? "the guest"} {fmtAgo(note.data.prescriptionEmailedAt)}
+              <div className="mb-2 flex items-center gap-1.5 text-[11px] text-ok">
+                <Check size={12} /> Emailed to {note.data.prescriptionEmailedTo ?? "the guest"} {fmtAgo(note.data.prescriptionEmailedAt)}
               </div>
             )}
             <div className="mb-2 flex gap-2">
