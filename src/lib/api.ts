@@ -312,7 +312,7 @@ export const doctors = {
  */
 export const schedules = {
   get: (doctorId: string) =>
-    request<{ dermatologist: Doctor; schedule: DermatologistSchedule; canEdit: boolean }>(
+    request<{ dermatologist: Doctor; schedule: DermatologistSchedule; canEdit: boolean; scheduleAuthority?: "zenoti" | "local"; authorityMessage?: string }>(
       `/dermatologists/${encodeURIComponent(doctorId)}/schedule`,
     ),
   save: (doctorId: string, body: Partial<DermatologistSchedule>) =>

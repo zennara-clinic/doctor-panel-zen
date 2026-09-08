@@ -147,6 +147,7 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
   } : null);
 
   const canEdit = loaded.data?.canEdit ?? false;
+  const zenotiPrimary = loaded.data?.scheduleAuthority === "zenoti";
 
   // Centre choices are the dermatologist's assigned centres, nothing else —
   // assignment itself is admin-only, done from the admin panel.
@@ -267,7 +268,7 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
         ) : (
           <Page
             title={forced ? (loaded.data?.dermatologist.name ?? "Working hours") : "My schedule"}
-            sub="Your usual week plus date-specific changes — exactly what patients can book in the app"
+            sub={zenotiPrimary ? "Live Zenoti working hours, leave and block-outs are what patients can book" : "Your usual week plus date-specific changes"}
             actions={canEdit ? (
               <>
                 {dirty && !error && <Tag kind="warn">unsaved changes</Tag>}
@@ -293,7 +294,7 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
               </Note>
             )}
             {!canEdit && (
-              <Note className="mb-3">You can view this calendar, but only its owner or an admin can change it.</Note>
+              <Note className="mb-3">{zenotiPrimary ? (loaded.data?.authorityMessage || "Manage working hours, leave and block-outs in Zenoti. This panel reads them back live.") : "You can view this calendar, but only its owner or an admin can change it."}</Note>
             )}
 
             <div className="grid items-start gap-3.5 xl:grid-cols-[minmax(0,1fr)_390px]">
