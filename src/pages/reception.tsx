@@ -2026,7 +2026,7 @@ function RecordMembershipPaymentModal({ open, onClose, user, onDone }: {
 }) {
   const { toast, audit } = useStore();
   const app = useApi(() => api.appStudio.get().catch(() => null), []);
-  const suggested = Number((app.data as { membership?: { priceInr?: number } } | null)?.membership?.priceInr) || 110000;
+  const suggested = Number((app.data as { membership?: { priceInr?: number } } | null)?.membership?.priceInr) || 135000;
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("Paid at clinic");
   const [txn, setTxn] = useState("");
@@ -2066,7 +2066,7 @@ const MEMBERSHIP_METHODS = ["Paid at clinic", "Cash", "Card", "UPI", "Bank Trans
 function GrantMembershipModal({ open, onClose, user, onDone }: { open: boolean; onClose: () => void; user: User; onDone: () => void }) {
   const { toast, audit } = useStore();
   const app = useApi(() => api.appStudio.get().catch(() => null), []);
-  const yearly = Number((app.data as { membership?: { priceInr?: number; durationMonths?: number } } | null)?.membership?.priceInr) || 110000;
+  const yearly = Number((app.data as { membership?: { priceInr?: number; durationMonths?: number } } | null)?.membership?.priceInr) || 135000;
   const [months, setMonths] = useState(12);
   const [customMonths, setCustomMonths] = useState("");
   const [amount, setAmount] = useState("");
