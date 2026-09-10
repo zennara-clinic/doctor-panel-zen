@@ -193,8 +193,23 @@ function Workspace({ bookingId }: { bookingId: string }) {
   const meRef = useRef(me.data); meRef.current = me.data;
 
   const signed = note.data?.status === "Completed";
-  const locked = signed && !editingSigned;
+  // Nothing is editable until the saved note has loaded: an empty editor that
+  // autosaved would overwrite the stored note with blanks.
+  const noteReady = note.data !== undefined;
+  const noteFailed = !noteReady && !!note.error;
+  const locked = !noteReady || (signed && !editingSigned);
   const lockedRef = useRef(locked); lockedRef.current = locked;
+  /*
+   * A signed note being corrected is never saved as a draft. A draft save that
+   * touches the prescription revokes the signature on the server, and Cancel
+   * could not give it back — so corrections reach the server only when re-signed.
+   */
+  const holdDrafts = signed && editingSigned;
+  const holdRef = useRef(holdDrafts); holdRef.current = holdDrafts;
+  /** Saves run one at a time; Sign waits for the one in flight. */
+  const inflight = useRef<Promise<boolean> | null>(null);
+  const autosaveTimer = useRef<number | null>(null);
+  const signingRef = useRef(false);
 
   // Prime from the server, but never over edits typed while a save was in flight.
   const noteKey = note.data === undefined ? "loading" : `${note.data?._id ?? "none"}:${note.data?.updatedAt ?? ""}`;
@@ -218,34 +233,50 @@ function Workspace({ bookingId }: { bookingId: string }) {
     doctorId: meRef.current?.doctorId, doctorName: meRef.current?.name,
   }) as Parameters<typeof api.consultationNotes.save>[0];
 
-  const saveDraft = useCallback(async (quiet: boolean) => {
-    if (!dirtyRef.current || lockedRef.current) return true;
-    const snapshot = draftRef.current;
-    setSaveState("saving");
-    try {
-      // A signed note is saved without a status, so the server decides whether
-      // the change touched the prescription (and so revokes the signature).
-      const saved = await api.consultationNotes.save(payload(snapshot, noteRef.current?.status === "Completed" ? undefined : "Draft"));
-      if (draftRef.current === snapshot) setDirty(false);
-      note.setData(saved);
-      setSaveState("saved");
-      if (!quiet) toast("Draft saved");
-      return true;
-    } catch (e) {
-      setSaveState("error");
-      toast(`Couldn’t save the draft — ${(e as Error).message}`);
-      return false;
-    }
+  const saveDraft = useCallback((quiet: boolean): Promise<boolean> => {
+    // Chained behind any save still in flight, so two first saves of a new
+    // note never race into the one-note-per-booking index.
+    const run = (inflight.current ?? Promise.resolve(true)).then(async () => {
+      if (!dirtyRef.current || lockedRef.current || holdRef.current || signingRef.current) return true;
+      if (noteRef.current === undefined) return false;
+      const snapshot = draftRef.current;
+      setSaveState("saving");
+      try {
+        const saved = await api.consultationNotes.save(payload(snapshot, "Draft"));
+        // A sign that began meanwhile owns the note now; this reply is stale.
+        if (signingRef.current) return true;
+        if (draftRef.current === snapshot) setDirty(false);
+        note.setData(saved);
+        setSaveState("saved");
+        if (!quiet) toast("Draft saved");
+        return true;
+      } catch (e) {
+        setSaveState("error");
+        toast(`Couldn’t save the draft — ${(e as Error).message}`);
+        return false;
+      }
+    });
+    inflight.current = run;
+    void run.finally(() => { if (inflight.current === run) inflight.current = null; });
+    return run;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Sign stops the autosave clock and lets any save already in flight land first. */
+  const beforeSign = useCallback(async () => {
+    signingRef.current = true;
+    if (autosaveTimer.current) { window.clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
+    await inflight.current?.catch(() => undefined);
+  }, []);
+  const afterSign = useCallback(() => { signingRef.current = false; }, []);
 
   // 20 seconds after the last edit.
   useEffect(() => {
-    if (!dirty || locked) return;
-    const t = window.setTimeout(() => { void saveDraft(true); }, 20000);
-    return () => window.clearTimeout(t);
-  }, [draft, dirty, locked, saveDraft]);
+    if (!dirty || locked || holdDrafts) return;
+    autosaveTimer.current = window.setTimeout(() => { autosaveTimer.current = null; void saveDraft(true); }, 20000);
+    return () => { if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current); autosaveTimer.current = null; };
+  }, [draft, dirty, locked, holdDrafts, saveDraft]);
   // Leaving the screen.
-  useEffect(() => () => { if (dirtyRef.current && !lockedRef.current) void saveDraft(true); }, [saveDraft]);
+  useEffect(() => () => { if (dirtyRef.current && !lockedRef.current && !holdRef.current) void saveDraft(true); }, [saveDraft]);
   useEffect(() => {
     if (!dirty) return;
     const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
@@ -357,9 +388,10 @@ function Workspace({ bookingId }: { bookingId: string }) {
           </div>
           <div className="dz-pbar__actions" data-tour="visit-action">
             <span data-tour="save-state" className={`dz-save ${dirty ? "is-dirty" : saveState === "saved" ? "is-ok" : ""}`}>
-              {locked ? <><ShieldCheck />Signed</>
+              {!noteReady ? (noteFailed ? <><AlertTriangle />Note not loaded</> : <><Loader2 className="animate-spin" />Loading note…</>)
+                : locked ? <><ShieldCheck />Signed</>
                 : saveState === "saving" ? <><Loader2 className="animate-spin" />Saving…</>
-                : dirty ? <>Unsaved changes</>
+                : dirty ? <>{holdDrafts ? "Sign again to keep changes" : "Unsaved changes"}</>
                 : saveState === "saved" ? <><Check />Saved</>
                 : note.data ? <><Check />Draft saved</> : null}
             </span>
@@ -394,8 +426,15 @@ function Workspace({ bookingId }: { bookingId: string }) {
               <div className="dz-note dz-note--err"><AlertTriangle /><span className="flex-1">{runner.error}</span>
                 <button type="button" className="dz-link" onClick={runner.clearError}>Dismiss</button></div>
             )}
+            {noteFailed && (
+              <div className="dz-note dz-note--err"><AlertTriangle />
+                <span className="flex-1">Couldn’t load the saved note{note.error ? ` — ${note.error}` : ""}. Editing is paused so nothing already written is overwritten.</span>
+                <button type="button" className="dz-btn dz-btn--danger dz-btn--sm" onClick={note.reload}>Try again</button>
+              </div>
+            )}
             <VisitBanner bk={bk} signed={signed} editing={editingSigned} note={note.data ?? null}
-              onEdit={() => setEditingSigned(true)} />
+              onEdit={() => setEditingSigned(true)}
+              onCancelEdit={() => { setEditingSigned(false); setDraft(fromNote(note.data)); setDirty(false); setSaveState("idle"); }} />
 
             {step === "guest" && guest}
 
@@ -485,6 +524,7 @@ function Workspace({ bookingId }: { bookingId: string }) {
                 doctorName={doctorName} photosCount={photosCount} dirty={dirty}
                 onGo={goStep} onSaveDraft={() => saveDraft(false)}
                 onSigned={(saved) => { note.setData(saved); setDirty(false); setEditingSigned(false); setSaveState("idle"); }}
+                beforeSign={beforeSign} afterSign={afterSign} reloadNote={note.reload}
                 runner={runner} reloadVisit={reloadVisit}
                 onFollowUp={(date) => update({ followUpDate: date })} />
             )}
@@ -493,7 +533,7 @@ function Workspace({ bookingId }: { bookingId: string }) {
           <div className="dz-actionbar">
             {prevStep ? <Btn kind="plain" onClick={() => goStep(prevStep.key)}><ChevronLeft />{prevStep.label}</Btn> : <span />}
             <span className="dz-spacer" />
-            {!locked && dirty && <Btn kind="secondary" onClick={() => saveDraft(false)} disabled={saveState === "saving"}>Save draft</Btn>}
+            {!locked && !holdDrafts && dirty && <Btn kind="secondary" onClick={() => saveDraft(false)} disabled={saveState === "saving"}>Save draft</Btn>}
             {nextStep && <Btn onClick={() => goStep(nextStep.key)}>Next: {nextStep.label}<ChevronRight /></Btn>}
           </div>
         </section>
@@ -522,8 +562,8 @@ function intakeSummary(f: PreConsultForm): string {
 
 /* ------------------------------------------------------------------ banner */
 
-function VisitBanner({ bk, signed, editing, note, onEdit }: {
-  bk: Booking; signed: boolean; editing: boolean; note: ConsultationNote | null; onEdit: () => void;
+function VisitBanner({ bk, signed, editing, note, onEdit, onCancelEdit }: {
+  bk: Booking; signed: boolean; editing: boolean; note: ConsultationNote | null; onEdit: () => void; onCancelEdit: () => void;
 }) {
   if (signed && !editing) {
     return (
@@ -540,7 +580,8 @@ function VisitBanner({ bk, signed, editing, note, onEdit }: {
   if (signed && editing) {
     return (
       <div className="dz-note dz-note--warn"><Pencil />
-        <span>You are editing a signed note. Changing the diagnosis, prescription or advice removes the signature until you sign again.</span>
+        <span className="flex-1">You are correcting a signed note. Nothing is saved until you sign again — Cancel puts the signed version back.</span>
+        <button type="button" className="dz-btn dz-btn--secondary dz-btn--sm" onClick={onCancelEdit}>Cancel editing</button>
       </div>
     );
   }
@@ -586,7 +627,6 @@ function GuestContext({ bk, patient: p, form, consent, history, paperIntake, doc
 
   const facts: [string, ReactNode][] = [];
   if (age || p?.gender) facts.push(["Age / gender", [age ? `${age} yrs` : null, p?.gender].filter(Boolean).join(" · ")]);
-  if (p?.phone) facts.push(["Phone", p.phone]);
   const now = Date.now();
   const earlier = (history?.visits ?? [])
     .filter((b) => b.status !== "Cancelled" && new Date(b.confirmedDate || b.preferredDate).getTime() <= now);
@@ -778,7 +818,8 @@ function TreatmentsPanel({ assigned, locked, packages, onChange }: {
 
 /* -------------------------------------------------------------------- sign */
 
-function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName, photosCount, dirty, onGo, onSaveDraft, onSigned, runner, reloadVisit, onFollowUp }: {
+function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName, photosCount, dirty, onGo, onSaveDraft, onSigned, runner, reloadVisit, onFollowUp, beforeSign, afterSign, reloadNote }: {
+  beforeSign: () => Promise<void>; afterSign: () => void; reloadNote: () => void;
   bk: Booking; patient: User | null | undefined; form: PreConsultForm | null; draft: Draft; note: ConsultationNote | null;
   signed: boolean; editing: boolean; doctorName: string; photosCount: number; dirty: boolean;
   onGo: (s: Step) => void; onSaveDraft: () => void; onSigned: (n: ConsultationNote) => void;
@@ -797,14 +838,18 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
   const sheetRef = useRef<HTMLElement | null>(null);
 
   const chosen = FOLLOW_UPS.find((c) => draft.followUpDate === addClinicDays(today, c.days))?.key ?? (draft.followUpDate ? "date" : noFollowUp ? "none" : "");
-  const nothingWritten = ![draft.complaint, draft.examination, draft.primaryDiagnosis, draft.assessment, draft.plan].some((x) => x.trim()) && draft.prescription.length === 0;
+  // Treatments or advice alone are a legitimate note to sign.
+  const nothingWritten = ![draft.complaint, draft.examination, draft.primaryDiagnosis, draft.assessment, draft.plan, draft.skinCareAdvice, draft.lifestyleAdvice, draft.precautions].some((x) => x.trim())
+    && draft.prescription.length === 0 && draft.assignedServices.length === 0;
   const willCheckout = bk.status === "In Progress" && checkout;
 
   const finish = async () => {
     setBusy(true); setErr(null); setCloseFailed(false);
+    await beforeSign();
     let saved: ConsultationNote;
+    let emailed = false;
     try {
-      saved = await api.consultationNotes.save({
+      const res = await api.consultationNotes.saveWithResult({
         bookingId: bk._id,
         complaint: draft.complaint, examination: draft.examination, assessment: draft.assessment, plan: draft.plan,
         sketch: draft.sketch ?? undefined, prescription: draft.prescription, assignedServices: draft.assignedServices,
@@ -813,10 +858,15 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
         skinCareAdvice: draft.skinCareAdvice, lifestyleAdvice: draft.lifestyleAdvice, precautions: draft.precautions,
         doctorId: me.data?.doctorId, doctorName: me.data?.name,
       } as Parameters<typeof api.consultationNotes.save>[0]);
+      if (!res.data) throw new Error(res.message || "The note could not be signed");
+      saved = res.data;
+      // Whether THIS sign sent the email — a re-sign must not reuse an old stamp.
+      emailed = res.prescriptionEmailed === true;
       onSigned(saved);
     } catch (e) {
       setErr((e as Error).message);
       setBusy(false);
+      afterSign();
       return;
     }
 
@@ -832,8 +882,9 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
     else if (draft.followUpDate) stages.push({ stage: "follow_up_required", followUp: { required: true, dueDate: draft.followUpDate, notes: "" } });
     for (const s of stages) await api.bookings.setStage(bk._id, s).catch(() => undefined);
 
-    toast(saved.prescriptionEmailedAt ? `Signed — prescription emailed to ${saved.prescriptionEmailedTo ?? "the guest"}` : "Signed — the prescription is on the guest’s app");
+    toast(emailed ? `Signed — prescription emailed to ${saved.prescriptionEmailedTo ?? "the guest"}` : "Signed — the prescription is on the guest’s app");
     reloadVisit();
+    afterSign();
     setBusy(false);
   };
 
@@ -875,7 +926,7 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
                 <Btn kind="secondary" disabled={sending} onClick={async () => {
                   if (!note) return;
                   setSending(true);
-                  try { const r = await api.consultationNotes.send(note._id); toast((r.message as string) ?? "Prescription emailed"); }
+                  try { const r = await api.consultationNotes.send(note._id); toast((r.message as string) ?? "Prescription emailed"); reloadNote(); }
                   catch (e) { toast((e as Error).message); } finally { setSending(false); }
                 }}><Mail />{sending ? "Sending…" : note?.prescriptionEmailedAt ? "Email again" : "Email to guest"}</Btn>
               )}
@@ -945,12 +996,12 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
                 {closeFailed && <> <button type="button" className="dz-link" onClick={() => runner.perform(() => runner.exec("complete"), "Visit completed")}>Try again</button></>}
               </Note>
             )}
-            {nothingWritten && <Note kind="warn">Write the note or add a medicine before signing.</Note>}
+            {nothingWritten && <Note kind="warn">Write the note, add a medicine or recommend a treatment before signing.</Note>}
 
             <div className="dz-row mt-5">
               <span className="dz-hint">Signs as <b className="text-ink">{doctorName || "you"}</b></span>
               <span className="dz-spacer" />
-              {dirty && <Btn kind="secondary" onClick={onSaveDraft}>Save draft</Btn>}
+              {dirty && !editing && <Btn kind="secondary" onClick={onSaveDraft}>Save draft</Btn>}
               <Btn size="lg" disabled={busy || nothingWritten} onClick={finish}>
                 {busy ? <Loader2 className="animate-spin" /> : <PenLine />}
                 {busy ? "Signing…" : willCheckout ? "Sign and finish visit" : "Sign prescription"}
@@ -989,7 +1040,6 @@ function RxSheet({ sheetRef, bk, patient: p, form, draft, note, signed, doctorNa
         <div><span>Age / gender</span>{[age ? `${age} yrs` : null, p?.gender].filter(Boolean).join(" · ") || "—"}</div>
         <div><span>Date</span>{fmtDate(signed ? note?.prescriptionSignedAt ?? note?.completedAt : new Date())}</div>
         <div><span>Dermatologist</span>{signedBy || "—"}</div>
-        <div><span>Phone</span>{p?.phone ?? bk.mobileNumber ?? "—"}</div>
       </div>
       {allergy && <p><b>Allergies:</b> {allergy}</p>}
       {section("Complaint", draft.complaint)}

@@ -88,8 +88,6 @@ export function PreConsultBody({ form }: { form: PreConsultForm }) {
         <Row k="Name" v={form.name ?? guest?.fullName} />
         <Row k="Date of birth" v={form.dateOfBirth ? fmtDate(form.dateOfBirth) : ""} />
         <Row k="Gender" v={form.gender} />
-        <Row k="Phone" v={form.phoneNumber ?? guest?.phone} />
-        <Row k="E-mail" v={form.email ?? guest?.email} />
         <Row k="Marital status" v={form.maritalStatus} />
         {/* 0 is the model default, not an answer — only show a real count. */}
         <Row k="Children" v={form.numberOfChildren ? form.numberOfChildren : ""} />
