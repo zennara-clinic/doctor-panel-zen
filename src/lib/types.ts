@@ -578,26 +578,6 @@ export type PatientPhoto = {
   takenByName?: string;
   takenByRole?: string;
   createdAt?: string;
-  /** Circles, boxes, arrows and freehand lines drawn over the photo, each with an optional note. */
-  annotations?: PhotoMark[];
-  annotatedAt?: string | null;
-  annotatedByName?: string;
-};
-
-/** One mark on a clinical photo. Geometry is in fractions of the image (0..1). */
-export type PhotoMark = {
-  _id?: Id;
-  kind: "ellipse" | "rect" | "arrow" | "pen";
-  /** ellipse / rect: bounding box */
-  x?: number; y?: number; w?: number; h?: number;
-  /** arrow: [tail, tip]; pen: the stroke */
-  points?: [number, number][];
-  color: string;
-  /** Stroke width in screen pixels. */
-  width: number;
-  note?: string;
-  createdByName?: string;
-  createdAt?: string;
 };
 
 export type Brand = {

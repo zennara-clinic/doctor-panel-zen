@@ -32,19 +32,12 @@ export function MyMonth() {
     const currentStart = clinicMonthStart(today);
     const previousEnd = addClinicDays(currentStart, -1);
     const previousStart = clinicMonthStart(previousEnd);
-    // Twelve months back for the trend; up to today, so bookings still ahead don't count as seen or missed.
-    const trendStartDate = dayKeyDate(currentStart);
-    trendStartDate.setUTCMonth(trendStartDate.getUTCMonth() - 11, 1);
-    const trendStart = isoDay(trendStartDate);
-    const res = await api.bookings.list({ specialistId: me.data.doctorId, startDate: trendStart, endDate: today });
+    const res = await api.bookings.list({ specialistId: me.data.doctorId, startDate: previousStart });
     const mine = (res.data ?? []).filter(
       (b) => !b.specialistId || b.specialistId === me.data!.doctorId || b.specialistName === me.data!.name,
     );
 
-    const inMonth = mine.filter((b) => {
-      const day = isoDay(new Date(b.confirmedDate || b.preferredDate));
-      return day >= currentStart && day <= today;
-    });
+    const inMonth = mine.filter((b) => isoDay(new Date(b.confirmedDate || b.preferredDate)) >= currentStart);
     const prevMonth = mine.filter((b) => {
       const day = isoDay(new Date(b.confirmedDate || b.preferredDate));
       return day >= previousStart && day < currentStart;
@@ -112,11 +105,7 @@ export function MyMonth() {
                     { k: "vs last month", v: `${delta >= 0 ? "+" : ""}${delta}`, d: `${prevCompleted} completed then`, tone: delta >= 0 ? "up" : "dn" },
                     { k: "→ treatment", v: pct(conversion), d: "consults that assigned something", hot: true },
                     { k: "No-shows", v: noShows, d: d.inMonth.length ? pct((noShows / d.inMonth.length) * 100) : "—", tone: noShows ? "dn" : undefined },
-                    {
-                      k: "Notes signed",
-                      v: d.notes.filter((n) => n.status === "Completed" && isoDay(new Date(n.completedAt || n.createdAt || 0)) >= clinicMonthStart(isoDay())).length,
-                      d: `this month · ${d.notes.filter((n) => n.status === "Draft").length} still draft`,
-                    },
+                    { k: "Notes signed", v: d.notes.filter((n) => n.status === "Completed").length, d: `${d.notes.filter((n) => n.status === "Draft").length} still draft` },
                     { k: "Rating", v: avgRating ? avgRating.toFixed(1) : "—", d: `${rated.length} rated visits` },
                   ]} />
 

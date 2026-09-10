@@ -478,8 +478,7 @@ export const patientPhotos = {
     Object.entries(meta).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== "") form.append(k, String(v)); });
     return requestRaw<PatientPhoto[]>("/patient-photos", { method: "POST", body: form });
   },
-  /** Re-file a photo, or replace its marks (`annotations` is the full list). */
-  update: (id: Id, body: Partial<Pick<PatientPhoto, "phase" | "bodyArea" | "note" | "annotations">> & { bookingId?: Id | null }) =>
+  update: (id: Id, body: Partial<Pick<PatientPhoto, "phase" | "bodyArea" | "note">> & { bookingId?: Id | null }) =>
     request<PatientPhoto>(`/patient-photos/${id}`, { method: "PATCH", body }),
   remove: (id: Id) => requestRaw(`/patient-photos/${id}`, { method: "DELETE" }),
 };
