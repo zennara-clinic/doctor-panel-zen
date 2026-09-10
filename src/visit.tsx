@@ -8,7 +8,7 @@ import { ApiError } from "./lib/http";
 import type { Booking, Doctor, LifecycleAction, LifecycleOption, LifecycleState } from "./lib/types";
 import { bookingServiceName, bookingSlotDate, fmtDate, fmtTime } from "./lib/format";
 import { useApi } from "./lib/useApi";
-import { useStore, type AuditAction } from "./store";
+import { useStore } from "./store";
 import { Area, Btn, Empty, Menu, Modal, Note } from "./ui";
 import { LIFECYCLE_TOAST, StatusHistory } from "./lifecycle";
 
@@ -102,7 +102,10 @@ export function VisitRow({ booking: b, flags, onOpen, onStart, starting, showDat
     : <Btn onClick={open}><Play />Open</Btn>;
   else if (b.status === "Completed") action = flags?.note === "Completed"
     ? <Btn kind="secondary" onClick={open}><FileText />View note</Btn>
-    : <Btn kind="gold" onClick={open}><PenLine />Sign note</Btn>;
+    : flags?.note === "Draft"
+      ? <Btn kind="gold" onClick={open}><PenLine />Sign note</Btn>
+      // No note here: most completed visits come from Zenoti, where nothing was written in this panel.
+      : <Btn kind="secondary" onClick={open}>Open<ChevronRight /></Btn>;
   else if (done) action = <Btn kind="plain" onClick={open}>View</Btn>;
   else action = <Btn kind="secondary" onClick={open}>Open<ChevronRight /></Btn>;
 
@@ -140,12 +143,6 @@ export function VisitRow({ booking: b, flags, onOpen, onStart, starting, showDat
 
 /* ------------------------------------------------------------ lifecycle runs */
 
-const AUDIT: Partial<Record<LifecycleAction, AuditAction>> = {
-  check_in: "BOOKING_CHECKED_IN",
-  complete: "BOOKING_CHECKED_OUT",
-  no_show: "BOOKING_NO_SHOW",
-};
-
 const CONFIRM_COPY: Partial<Record<LifecycleAction, string>> = {
   no_show: "The guest did not come. The appointment is marked no-show here and in Zenoti.",
   undo_no_show: "Puts the appointment back to booked. This corrects Zennara only — Zenoti has no undo for a no-show.",
@@ -182,15 +179,15 @@ function ReasonDialog({ ask, busy, onClose }: { ask: Ask; busy: boolean; onClose
  * requires one (an early check-in, a reopen).
  */
 export function useVisitRunner(booking: Booking | null | undefined, onChanged: () => void) {
-  const { toast, audit } = useStore();
+  const { toast } = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ask, setAsk] = useState<Ask | null>(null);
 
+  // The lifecycle route writes the audit entry (with the reason) itself.
   const exec = async (action: LifecycleAction, over: { reason?: string; force?: boolean } = {}) => {
     if (!booking) return;
     await api.bookings.lifecycle(booking._id, { action, ...over });
-    audit(AUDIT[action] ?? "BOOKING_UPDATED", `${booking.fullName} · ${action}${over.reason ? ` — ${over.reason}` : ""}`, { bookingId: booking._id });
   };
 
   const perform = async (fn: () => Promise<void>, message: string): Promise<boolean> => {

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from "react";
 import api from "./lib/api";
 import { clearSession, getToken, hasLiveSession, onSessionExpired, setSession, storedAdmin } from "./lib/http";
+import { disconnectSocket } from "./lib/socket";
 import type { Admin, AdminRole, Branch } from "./lib/types";
 
 /**
@@ -143,6 +144,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // Tell the server, but drop the local session either way.
     api.auth.logout().catch(() => undefined);
     clearSession();
+    // Leave the staff room: a signed-out tab must stop receiving clinic updates.
+    disconnectSocket();
     setAdmin(null);
     setLoggedIn(false);
     setBranches([]);
@@ -191,6 +194,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       onSessionExpired(() => {
+        disconnectSocket();
         setAdmin(null);
         setLoggedIn(false);
         setBooting(false);

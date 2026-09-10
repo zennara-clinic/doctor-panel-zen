@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   CalendarCheck, CheckCircle2, ChevronLeft, ChevronRight, Coffee, FileText, PenLine, Play, Stethoscope, UserCheck, Users,
@@ -24,7 +24,7 @@ import type { Booking, PreConsultForm } from "../lib/types";
  */
 export function MyDay() {
   const nav = useNavigate();
-  const { admin, toast, audit } = useStore();
+  const { admin, toast } = useStore();
   const me = useMyDoctor();
   const [day, setDay] = useState(isoDay());
   const liveDay = useRef(isoDay());
@@ -49,16 +49,25 @@ export function MyDay() {
   const month = useMyBookings(me.data, undefined, monthRange);
   const upcomingRange = useMemo(() => ({ startDate: addClinicDays(today, 1), endDate: addClinicDays(today, 7) }), [today]);
   const upcoming = useMyBookings(me.data, undefined, upcomingRange);
+  // The month (for "Notes to sign") and the week ahead change while the page stays open too.
+  useBookingUpdates(month.reload, !!me.data);
+  useBookingUpdates(upcoming.reload, !!me.data);
+  usePoll(month.reload, 120000, !!me.data);
+  usePoll(upcoming.reload, 120000, !!me.data);
 
   const rows = bookings.data ?? [];
   const idsKey = rows.map((b) => b._id).join(",");
+  // A guest can submit their form without the booking changing; re-read intake every two minutes.
+  const [intakeTick, setIntakeTick] = useState(0);
+  const bumpIntake = useCallback(() => setIntakeTick((t) => t + 1), []);
+  usePoll(bumpIntake, 120000, !!me.data);
 
   const forms = useApi(async () => {
     const ids = rows.map((b) => b._id);
     if (!ids.length) return [] as PreConsultForm[];
     const parts = await Promise.all(ids.map((id) => api.preConsult.list({ bookingId: id, limit: 1 }).then((r) => r.data ?? []).catch(() => [] as PreConsultForm[])));
     return parts.flat();
-  }, [idsKey]);
+  }, [idsKey, intakeTick]);
 
   /*
    * Where each guest's intake stands: submitted, started, held on paper at the
@@ -70,7 +79,7 @@ export function MyDay() {
       .then((st) => [b._id, st.state] as const)
       .catch(() => [b._id, "unknown"] as const)));
     return new Map<string, string>(entries);
-  }, [idsKey]);
+  }, [idsKey, intakeTick]);
 
   const notes = useApi(
     () => (me.data ? api.consultationNotes.list({ doctorId: me.data.doctorId, limit: 300 }).then((r) => r.data ?? []) : Promise.resolve([])),
@@ -107,7 +116,12 @@ export function MyDay() {
     .sort((a, b) => new Date(a.checkInTime ?? 0).getTime() - new Date(b.checkInTime ?? 0).getTime());
   const live = rows.find((b) => b.status === "In Progress");
   const next = openRows.find((b) => ["Confirmed", "Rescheduled", "Awaiting Confirmation"].includes(b.status));
-  const toSign = (month.data ?? []).filter((b) => b.status === "Completed" && noteByBooking.get(b._id) !== "Completed");
+  /*
+   * A note written in this panel and not yet signed. Not "every completed visit
+   * without a signed note": nearly every visit is mirrored from Zenoti and never
+   * had a note here, so that counted 307 of 308 visits on prod (2026-09-10).
+   */
+  const toSign = (month.data ?? []).filter((b) => b.status === "Completed" && noteByBooking.get(b._id) === "Draft");
 
   const [view, setView] = useState<"next" | "done" | "sign">("next");
   const [starting, setStarting] = useState<string | null>(null);
@@ -116,8 +130,8 @@ export function MyDay() {
   const start = async (b: Booking) => {
     setStarting(b._id);
     try {
+      // The lifecycle route writes the audit entry itself.
       await api.bookings.lifecycle(b._id, { action: "start" });
-      audit("BOOKING_UPDATED", `${b.fullName} · start`, { bookingId: b._id });
       toast(`Consultation started — ${b.fullName}`);
       openConsult(b._id);
     } catch (e) {
@@ -229,7 +243,7 @@ export function MyDay() {
               <button type="button" className={`dz-stat ${toSign.length ? "dz-stat--warn" : ""} ${view === "sign" ? "is-on" : ""}`} onClick={() => setView("sign")}>
                 <div className="dz-stat__top">Notes to sign<span className="dz-stat__icon"><PenLine /></span></div>
                 <div className="dz-stat__n">{toSign.length}</div>
-                <div className="dz-stat__d">completed this month, unsigned</div>
+                <div className="dz-stat__d">drafts this month, not signed</div>
               </button>
             </div>
 
@@ -246,7 +260,7 @@ export function MyDay() {
                   <div className="dz-empty">
                     <div className="dz-empty__icon">{view === "sign" ? <CheckCircle2 /> : <Coffee />}</div>
                     <b>{view === "next" ? (rows.length ? "Nobody left to see" : `Nothing booked for ${dayLabel}`) : view === "done" ? "Nobody seen yet" : "Every note is signed"}</b>
-                    <p>{view === "next" && !rows.length ? "Guests booked with you at the front desk or in the app appear here." : view === "sign" ? "Completed visits without a signed note would show here." : ""}</p>
+                    <p>{view === "next" && !rows.length ? "Guests booked with you at the front desk or in the app appear here." : view === "sign" ? "A note you started this month and haven’t signed shows here." : ""}</p>
                   </div>
                 ) : (
                   <div className="dz-list">
