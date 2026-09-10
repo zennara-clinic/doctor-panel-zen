@@ -37,7 +37,7 @@ function Row({ k, v }: { k: string; v?: unknown }) {
   const text = v === null || v === undefined || v === "" ? "" : String(v);
   if (!text.trim()) return null;
   return (
-    <div className="flex gap-2 border-b border-border/60 py-1.5 last:border-0">
+    <div className="flex gap-2 border-b border-border py-2.5 last:border-0">
       <span className="w-[42%] shrink-0 text-ink3">{k}</span>
       <span className="flex-1 whitespace-pre-wrap text-ink2">{text}</span>
     </div>
@@ -48,8 +48,8 @@ function Row({ k, v }: { k: string; v?: unknown }) {
 function Block({ t, children, empty }: { t: string; children: React.ReactNode; empty?: boolean }) {
   if (empty) return null;
   return (
-    <div className="mt-3">
-      <div className="mb-1 font-mono text-[9.5px] font-bold uppercase tracking-[0.1em] text-ink3">{t}</div>
+    <div className="mt-6">
+      <div className="mb-1.5 text-[13.5px] font-extrabold text-ink">{t}</div>
       {children}
     </div>
   );
@@ -77,7 +77,7 @@ export function PreConsultBody({ form }: { form: PreConsultForm }) {
   const allergy = form.drugAllergies && !/^none/i.test(form.drugAllergies) ? form.drugAllergies : null;
 
   return (
-    <div className="text-[12px] leading-relaxed">
+    <div className="text-[14px] leading-relaxed">
       <div className="flex flex-wrap items-center gap-2">
         <Tag kind={form.status === "Approved" || form.status === "Reviewed" ? "ok" : form.status === "Rejected" ? "err" : "warn"}>{form.status}</Tag>
         <span className="text-ink3">Visit {fmtDate(form.dateOfVisit || form.createdAt)}</span>
@@ -115,7 +115,7 @@ export function PreConsultBody({ form }: { form: PreConsultForm }) {
         <Row k="Already tried" v={form.previousTreatments} />
         <Row k="Currently taking" v={form.currentMedications} />
         {form.pregnancyStatus && form.pregnancyStatus !== "not_applicable" && (
-          <div className="flex gap-2 border-b border-border/60 py-1.5">
+          <div className="flex gap-2 border-b border-border py-2.5">
             <span className="w-[42%] shrink-0 text-ink3">Pregnancy</span>
             {/* Load-bearing: most lasers and peels and several drugs are
                 contraindicated in pregnancy, so it reads as a warning. */}
@@ -126,7 +126,7 @@ export function PreConsultBody({ form }: { form: PreConsultForm }) {
       </Block>
 
       <Block t="Allergies & medical history" empty={!allergy && !form.otherAllergies && !medical.length && !menstrual}>
-        <div className="flex gap-2 border-b border-border/60 py-1.5">
+        <div className="flex gap-2 border-b border-border py-2.5">
           <span className="w-[42%] shrink-0 text-ink3">Drug allergies</span>
           <span className={`flex-1 ${allergy ? "font-semibold text-err" : "text-ink2"}`}>{allergy ?? "None reported"}</span>
         </div>
@@ -152,7 +152,7 @@ export function PreConsultBody({ form }: { form: PreConsultForm }) {
           <div className="flex flex-wrap gap-1.5 pt-1">
             {(form.photos ?? []).map((ph, i) => (
               <a key={i} href={ph.url} target="_blank" rel="noreferrer">
-                <img src={ph.url} alt={ph.caption || "Patient photo"} className="h-20 w-20 rounded-lg border border-border object-cover" />
+                <img src={ph.url} alt={ph.caption || "Patient photo"} className="h-24 w-24 rounded-xl border border-border object-cover" />
               </a>
             ))}
           </div>

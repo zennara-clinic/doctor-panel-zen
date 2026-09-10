@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
-import { Check, Pill, Plus, Search, Star, Trash, X } from "lucide-react";
-import type { Id, PrescriptionItem, ProductAvailability, RxFavourite, RxRecentItem } from "./lib/types";
+import { useState } from "react";
+import { Check, History, Pill, Plus, Search, Star, Trash2 } from "lucide-react";
+import type { PrescriptionItem, ProductAvailability, RxFavourite, RxRecentItem } from "./lib/types";
 import api from "./lib/api";
 import { useApi, useDebounced } from "./lib/useApi";
-import { Btn, Card, Empty, In, Modal, SecH, Sel, Tag, Toggle } from "./ui";
+import { useStore } from "./store";
+import { Btn, Empty, In, Modal, Panel, Segmented, Sel, Sheet, Switch, Tag, Toggle } from "./ui";
 import StockPill from "./stock-pill";
 import {
   DOSE_CHIPS, DURATION_CHIPS, FORM_CHIPS, FREQUENCY_CHIPS,
@@ -13,20 +14,18 @@ import {
 /**
  * The prescription builder.
  *
- * It replaced a flat list where every medicine meant filling seven text boxes
- * by hand. Dermatology is repetitive — the same acne set, the same melasma
- * set, several times a day — so the work is now picking, not typing: three
- * shelves feed one list, and a tap on any line opens a sheet where every
- * common value is a chip.
+ * Dermatology is repetitive — the same acne set, the same melasma set, several
+ * times a day — so the work is picking, not typing: three shelves feed one
+ * list, and a tap on any line opens a bottom sheet where every common value is
+ * a chip.
  *
- *   Favourites  prescriptions this doctor saved, and any shared clinic-wide
- *   Recent      what they actually prescribe most, from their own past notes
- *   Search      the live stock list, with quantities and the Rx flag
+ *   Search stock   the live stock list at this centre, quantities and the Rx flag
+ *   Favourites     prescriptions this dermatologist saved, plus shared clinic ones
+ *   Often used     what they actually prescribe most, from their own past notes
  *
- * What it writes is unchanged: `ConsultationNote.prescription`, the same
- * PrescriptionItem the printed slip, the refill reminder and the guest's app
- * already read. Nothing here signs anything — signing stays behind
- * `prescriptions.sign` on the server.
+ * What it writes is unchanged: `ConsultationNote.prescription`. Nothing here
+ * signs anything — signing stays behind `prescriptions.sign` on the server.
+ * No prices, ever: availability, not the catalogue.
  */
 
 /* ------------------------------------------------------------------ chips */
@@ -36,27 +35,22 @@ function ChipRow({ label, value, onChange, chips, placeholder }: {
 }) {
   const isChip = chips.includes(value);
   const [typing, setTyping] = useState(false);
+  const custom = typing || (!isChip && !!value);
   return (
-    <div className="mb-3.5">
-      <div className="mb-1.5 font-mono text-[9.5px] font-bold uppercase tracking-[0.1em] text-ink3">{label}</div>
-      <div className="flex flex-wrap gap-1.5">
+    <div className="dz-field">
+      <span className="dz-label">{label}</span>
+      <div className="dz-chips">
         {chips.map((c) => (
-          <button key={c} type="button" onClick={() => { onChange(value === c ? "" : c); setTyping(false); }}
-            className={`inline-flex min-h-[34px] items-center gap-1 rounded-full border px-3 text-[12px] transition ${
-              value === c ? "border-gold bg-gold font-bold text-primary" : "border-border bg-surface text-ink2 hover:bg-ivory"}`}>
-            {value === c && <Check className="h-3.5 w-3.5" />}{c}
+          <button key={c} type="button" className={`dz-chip ${value === c ? "is-on" : ""}`}
+            onClick={() => { onChange(value === c ? "" : c); setTyping(false); }}>
+            {value === c && <Check />}{c}
           </button>
         ))}
-        <button type="button" onClick={() => setTyping(true)}
-          className={`inline-flex min-h-[34px] items-center rounded-full border px-3 text-[12px] ${
-            !isChip && value ? "border-gold bg-gold font-bold text-primary" : "border-border bg-surface text-ink3 hover:bg-ivory"}`}>
-          Other…
-        </button>
+        <button type="button" className={`dz-chip dz-chip--dash ${custom ? "is-on" : ""}`} onClick={() => setTyping(true)}>Other…</button>
       </div>
-      {(typing || (!isChip && value)) && (
-        <input autoFocus value={isChip ? "" : value} onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder ?? `Type ${label.toLowerCase()}`}
-          className="mt-2 w-full rounded-lg border border-border bg-ivory px-2.5 py-2 text-[12.5px] outline-none focus:border-gold-dark" />
+      {custom && (
+        <input autoFocus={typing} className="dz-input" value={isChip ? "" : value} onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder ?? `Type the ${label.toLowerCase()}`} />
       )}
     </div>
   );
@@ -70,123 +64,106 @@ function InstructionChips({ value, onChange }: { value: string; onChange: (v: st
     onChange(next.length ? `${next.join(". ")}.` : "");
   };
   return (
-    <div className="mb-3.5">
-      <div className="mb-1.5 font-mono text-[9.5px] font-bold uppercase tracking-[0.1em] text-ink3">Instructions to the guest</div>
-      <div className="flex flex-wrap gap-1.5">
+    <div className="dz-field">
+      <span className="dz-label">Instructions to the guest</span>
+      <div className="dz-chips">
         {INSTRUCTION_CHIPS.map((c) => (
-          <button key={c} type="button" onClick={() => toggle(c)}
-            className={`inline-flex min-h-[34px] items-center gap-1 rounded-full border px-3 text-[12px] ${
-              parts.includes(c) ? "border-gold bg-gold font-bold text-primary" : "border-border bg-surface text-ink2 hover:bg-ivory"}`}>
-            {parts.includes(c) && <Check className="h-3.5 w-3.5" />}{c}
+          <button key={c} type="button" className={`dz-chip dz-chip--sm ${parts.includes(c) ? "is-on" : ""}`} onClick={() => toggle(c)}>
+            {parts.includes(c) && <Check />}{c}
           </button>
         ))}
       </div>
-      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={2}
-        placeholder="Anything else the guest should know"
-        className="mt-2 w-full rounded-lg border border-border bg-ivory px-2.5 py-2 text-[12.5px] outline-none focus:border-gold-dark" />
+      <textarea className="dz-textarea" style={{ minHeight: 72 }} value={value} onChange={(e) => onChange(e.target.value)} rows={2}
+        placeholder="Anything else the guest should know" />
     </div>
   );
 }
 
+export const rxSummary = (m: PrescriptionItem) =>
+  [m.strength, m.dosage, m.frequency, m.duration, m.timing].filter(Boolean).join(" · ");
+
 /* ------------------------------------------------------------ item editor */
 
-/**
- * One medicine, edited in a sheet.
- *
- * Refill days are shown as what they will actually be — derived from the
- * duration when left blank — rather than as an empty box that quietly becomes
- * something else on save. A doctor should be able to see the nudge the guest
- * is going to get.
- */
 export function RxItemEditor({ item, onSave, onRemove, onClose }: {
   item: PrescriptionItem; onSave: (v: PrescriptionItem) => void; onRemove?: () => void; onClose: () => void;
 }) {
   const [v, setV] = useState<PrescriptionItem>(item);
   const set = <K extends keyof PrescriptionItem>(k: K, val: PrescriptionItem[K]) => setV((x) => ({ ...x, [k]: val }));
   const derived = refillDaysFromDuration(v.duration);
-  const refill = v.refillAfterDays === null || v.refillAfterDays === undefined || v.refillAfterDays === "" ? derived : Number(v.refillAfterDays);
 
   return (
-    <Modal open onClose={onClose} title={v.medicine || "Medicine"} wide>
-      <div className="max-h-[62vh] overflow-auto pr-1">
-        <div className="mb-3.5 grid grid-cols-2 gap-2">
+    <Sheet open onClose={onClose} eyebrow="Medicine" title={v.medicine || "New medicine"}
+      sub={rxSummary(v) || "Tap the chips — nothing needs typing."}
+      footer={<>
+        {onRemove && <Btn kind="danger" onClick={onRemove}><Trash2 />Remove</Btn>}
+        <span className="flex-1" />
+        <Btn kind="secondary" onClick={onClose}>Cancel</Btn>
+        <Btn size="lg" onClick={() => onSave({ ...v, medicine: v.medicine.trim() })} disabled={!v.medicine.trim()}><Check />Done</Btn>
+      </>}>
+      <div className="dz-stack" style={{ gap: 22 }}>
+        <div className="dz-form-grid">
           <In label="Medicine" value={v.medicine} onChange={(x) => set("medicine", x)} />
           <In label="Strength" value={v.strength ?? ""} onChange={(x) => set("strength", x)} placeholder="500 mg, 0.1%" />
         </div>
         <ChipRow label="Form" value={v.formulation ?? ""} onChange={(x) => set("formulation", x)} chips={FORM_CHIPS} />
         <ChipRow label="Dose" value={v.dosage ?? ""} onChange={(x) => set("dosage", x)} chips={DOSE_CHIPS} />
-        <ChipRow label="Frequency" value={v.frequency ?? ""} onChange={(x) => set("frequency", x)} chips={FREQUENCY_CHIPS} />
-        <ChipRow label="Duration" value={v.duration ?? ""} onChange={(x) => set("duration", x)} chips={DURATION_CHIPS} />
-        <ChipRow label="Timing" value={v.timing ?? ""} onChange={(x) => set("timing", x)} chips={TIMING_CHIPS} />
+        <ChipRow label="How often" value={v.frequency ?? ""} onChange={(x) => set("frequency", x)} chips={FREQUENCY_CHIPS} />
+        <ChipRow label="For how long" value={v.duration ?? ""} onChange={(x) => set("duration", x)} chips={DURATION_CHIPS} />
+        <ChipRow label="When" value={v.timing ?? ""} onChange={(x) => set("timing", x)} chips={TIMING_CHIPS} />
         <InstructionChips value={v.instructions ?? ""} onChange={(x) => set("instructions", x)} />
-
-        <div className="flex flex-wrap items-center gap-4 border-t border-border pt-3">
-          <label className="flex items-center gap-2 text-[12px] text-ink2">
-            <Toggle on={!!v.isScheduleH} onChange={(on) => set("isScheduleH", on)} />
-            Schedule H
-          </label>
-          <div className="flex items-center gap-2 text-[12px] text-ink2">
-            <span>Refill nudge after</span>
-            <input type="number" min={0} max={365}
-              value={v.refillAfterDays ?? ""} onChange={(e) => set("refillAfterDays", e.target.value === "" ? null : Number(e.target.value))}
-              placeholder={derived ? String(derived) : "—"}
-              className="w-20 rounded border border-border bg-ivory px-2 py-1 text-[12px] outline-none focus:border-gold-dark" />
-            <span className="text-ink3">
-              days{refill && v.refillAfterDays == null ? ` · from the duration` : ""}
-            </span>
+        <div className="dz-switch">
+          <div><b>Schedule H drug</b><small>The printed prescription carries your signature line.</small></div>
+          <Toggle on={!!v.isScheduleH} onChange={(on) => set("isScheduleH", on)} label="Schedule H" />
+        </div>
+        <div className="dz-field">
+          <label className="dz-label" htmlFor="rx-refill">Refill reminder after</label>
+          <div className="dz-row">
+            <input id="rx-refill" type="number" min={0} max={365} className="dz-input" style={{ maxWidth: 130 }}
+              value={v.refillAfterDays ?? ""} placeholder={derived ? String(derived) : "—"}
+              onChange={(e) => set("refillAfterDays", e.target.value === "" ? null : Number(e.target.value))} />
+            <span className="dz-hint">days{derived && (v.refillAfterDays === null || v.refillAfterDays === undefined || v.refillAfterDays === "") ? ` — blank uses ${derived}, from the duration` : " — the guest’s app nudges them when the course runs out"}</span>
           </div>
         </div>
-        {v.isScheduleH && <div className="mt-2"><Tag kind="warn">Schedule H — the printed slip needs your signature</Tag></div>}
       </div>
-      <div className="mt-4 flex items-center gap-2 border-t border-border pt-3">
-        {onRemove && <Btn kind="ghost" onClick={onRemove}><span className="flex items-center gap-1.5 text-err"><Trash className="h-3.5 w-3.5" /> Remove</span></Btn>}
-        <span className="flex-1" />
-        <Btn kind="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn onClick={() => onSave({ ...v, medicine: v.medicine.trim() })} disabled={!v.medicine.trim()}>Done</Btn>
-      </div>
-    </Modal>
+    </Sheet>
   );
 }
 
 /* --------------------------------------------------------- save favourite */
 
-/** The "no category" row. `Sel` renders plain strings, so it needs a label. */
 const NO_CATEGORY = "No category";
 
-function SaveFavourite({ items, advice, onClose, onSaved }: {
-  items: PrescriptionItem[]; advice?: string | null; onClose: () => void; onSaved: (name: string) => void;
+function SaveFavourite({ items, onClose, onSaved }: {
+  items: PrescriptionItem[]; onClose: () => void; onSaved: (name: string) => void;
 }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState(NO_CATEGORY);
-  const [scope, setScope] = useState<"mine" | "clinic">("mine");
+  const [shared, setShared] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const save = async () => {
-    if (!name.trim()) return setErr("Give it a name you'll recognise next week.");
+    if (!name.trim()) return setErr("Give it a name you’ll recognise next week.");
     setBusy(true); setErr(null);
     try {
-      await api.rxFavourites.save({ name: name.trim(), items, category: category === NO_CATEGORY ? null : category, advice: advice || null, scope });
+      await api.rxFavourites.save({ name: name.trim(), items, category: category === NO_CATEGORY ? null : category, scope: shared ? "clinic" : "mine" });
       onSaved(name.trim());
     } catch (e) { setErr((e as Error).message); setBusy(false); }
   };
 
   return (
-    <Modal open onClose={onClose} title="Save this prescription">
-      <p className="mb-3 text-[12px] text-ink3">
-        Saves the {items.length} line{items.length === 1 ? "" : "s"} above, not this guest. You can still change every
-        field each time you use it.
-      </p>
-      <In label="Name" value={name} onChange={setName} placeholder="Acne — moderate, first visit" full />
-      <div className="mt-3"><Sel label="Category" value={category} onChange={(v) => setCategory(v === NO_CATEGORY ? "" : v)} options={[NO_CATEGORY, ...RX_CATEGORIES]} full /></div>
-      <label className="mt-3 flex items-start gap-2 text-[12px] text-ink2">
-        <input type="checkbox" checked={scope === "clinic"} onChange={(e) => setScope(e.target.checked ? "clinic" : "mine")} className="mt-0.5" />
-        <span>Share with every dermatologist. Use this for a protocol the centre has agreed — it stays yours to edit.</span>
-      </label>
-      {err && <div className="mt-3 text-[12px] text-err">{err}</div>}
-      <div className="mt-4 flex justify-end gap-2">
-        <Btn kind="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</Btn>
+    <Modal open onClose={onClose} title="Save as a favourite"
+      sub={`Saves the ${items.length} line${items.length === 1 ? "" : "s"}, not this guest. Every field stays editable each time you use it.`}
+      footer={<>
+        {err && <span className="dz-error mr-auto">{err}</span>}
+        <span className="flex-1" />
+        <Btn kind="secondary" onClick={onClose}>Cancel</Btn>
+        <Btn onClick={save} disabled={busy}><Star />{busy ? "Saving…" : "Save favourite"}</Btn>
+      </>}>
+      <div className="dz-stack">
+        <In label="Name" value={name} onChange={setName} placeholder="Acne — moderate, first visit" />
+        <Sel label="Category" value={category} onChange={setCategory} options={[NO_CATEGORY, ...RX_CATEGORIES]} />
+        <Switch label="Share with every dermatologist" sub="For a protocol the centre has agreed. It stays yours to edit." on={shared} onChange={setShared} />
       </div>
     </Modal>
   );
@@ -194,53 +171,43 @@ function SaveFavourite({ items, advice, onClose, onSaved }: {
 
 /* --------------------------------------------------------------- builder */
 
-const summary = (m: PrescriptionItem) =>
-  [m.strength, m.dosage, m.frequency, m.duration, m.timing].filter(Boolean).join(" · ");
-
 export default function RxBuilder({ rx, setRx, locked, branchId }: {
   rx: PrescriptionItem[];
   setRx: (next: PrescriptionItem[]) => void;
   locked: boolean;
-  /** Scopes the stock search to the centre the doctor is sitting in. */
+  /** Scopes the stock search to the centre the dermatologist is sitting in. */
   branchId?: string | null;
 }) {
-  const [shelf, setShelf] = useState<"favourites" | "recent" | "search">("search");
+  const { toast } = useStore();
+  const [shelf, setShelf] = useState<"search" | "favourites" | "recent">("search");
   const [q, setQ] = useState("");
   const search = useDebounced(q, 300);
-  const [editing, setEditing] = useState<{ index: number } | null>(null);
+  const [editing, setEditing] = useState<number | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
 
-  const favourites = useApi(() => api.rxFavourites.list().then((r) => r.data ?? []).catch(() => []), []);
-  const recent = useApi(() => api.rxFavourites.recent().then((r) => r.data ?? []).catch(() => []), []);
+  const favourites = useApi(() => api.rxFavourites.list().then((r) => r.data ?? []).catch(() => [] as RxFavourite[]), []);
+  const recent = useApi(() => api.rxFavourites.recent().then((r) => r.data ?? []).catch(() => [] as RxRecentItem[]), []);
   const results = useApi(
     () => (search.trim().length >= 2
-      ? api.productAvailability.list({ search: search.trim(), limit: 8, ...(branchId ? { branchId } : {}) }).then((r) => r.data ?? []).catch(() => [])
+      ? api.productAvailability.list({ search: search.trim(), limit: 10, ...(branchId ? { branchId } : {}) }).then((r) => r.data ?? []).catch(() => [])
       : Promise.resolve([] as ProductAvailability[])),
     [search, branchId],
   );
 
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2200); return () => clearTimeout(t); }, [toast]);
-
   const add = (item: PrescriptionItem, openEditor = false) => {
     const next = [...rx, item];
     setRx(next);
-    setToast(`Added ${item.medicine}`);
-    if (openEditor) setEditing({ index: next.length - 1 });
+    toast(`Added ${item.medicine}`);
+    if (openEditor) setEditing(next.length - 1);
   };
 
-  const addFavourite = async (f: RxFavourite) => {
+  const addFavourite = (f: RxFavourite) => {
     setRx([...rx, ...f.items.map((i) => ({ ...i }))]);
-    setToast(`Added ${f.items.length} line${f.items.length === 1 ? "" : "s"} from ${f.name}`);
+    toast(`Added ${f.items.length} line${f.items.length === 1 ? "" : "s"} from ${f.name}`);
     void api.rxFavourites.markUsed(f._id);
   };
 
-  /*
-   * A Zennara product carries its id and the stock at the moment of
-   * prescribing — quantity only, never a price. `isRx` on the product master
-   * sets Schedule H so nobody has to remember which molecules need a signed
-   * slip.
-   */
+  /** A product carries its id and the stock at the moment of prescribing — quantity only, never a price. */
   const fromProduct = (p: ProductAvailability): PrescriptionItem => ({
     medicine: p.name,
     formulation: p.formulation ?? null,
@@ -249,157 +216,136 @@ export default function RxBuilder({ rx, setRx, locked, branchId }: {
     availableQuantity: p.quantity,
   });
 
+  const freeText = () => { if (!q.trim()) return; add({ medicine: q.trim(), isScheduleH: false }, true); setQ(""); };
+  const favs = favourites.data ?? [];
+
   return (
-    <Card data-tour="rx" className="p-4">
-      <SecH t="Prescription" em={rx.length ? `${rx.length} line${rx.length === 1 ? "" : "s"}` : undefined}
-        right={!locked && rx.length > 0 ? (
-          <Btn kind="ghost" className="!py-1 !text-[11.5px]" onClick={() => setSaveOpen(true)}>
-            <span className="flex items-center gap-1.5"><Star className="h-3.5 w-3.5" /> Save as favourite</span>
-          </Btn>
-        ) : undefined} />
-
-      {/* ---------------- what is on the prescription ---------------- */}
-      {rx.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border px-3 py-4 text-[11.5px] text-ink3">
-          Nothing added yet. Pick from a saved prescription, from what you write most, or search the stock list below.
-        </div>
-      ) : (
-        <div className="mb-3 grid gap-1.5">
-          {rx.map((m, i) => (
-            <button key={i} type="button" disabled={locked} onClick={() => setEditing({ index: i })}
-              className="group flex w-full items-start gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-2 text-left hover:bg-ivory disabled:cursor-default">
-              <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-sage text-primary"><Pill className="h-3.5 w-3.5" /></span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[12.5px] font-semibold text-ink">{m.medicine}</span>
-                <span className="block text-[11px] text-ink3">{summary(m) || <em>Tap to set dose and duration</em>}</span>
-                {m.instructions && <span className="mt-0.5 block text-[11px] text-ink2">{m.instructions}</span>}
-                {m.isScheduleH && <span className="mt-1 inline-block"><Tag kind="warn">Sch H</Tag></span>}
-              </span>
-              {!locked && <span className="shrink-0 text-[11px] font-semibold text-primary opacity-0 group-hover:opacity-100">Edit</span>}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* ---------------------------- shelves ---------------------------- */}
-      {!locked && (
-        <div className="rounded-xl border border-border bg-ivory p-2.5">
-          <div className="mb-2 flex gap-1">
-            {([["search", "Search stock", Search], ["favourites", "Favourites", Star], ["recent", "I prescribe often", Pill]] as const).map(([k, label, Icon]) => (
-              <button key={k} type="button" onClick={() => setShelf(k)}
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold ${
-                  shelf === k ? "bg-primary text-white" : "text-ink2 hover:bg-surface"}`}>
-                <Icon className="h-3.5 w-3.5" />{label}
-                {k === "favourites" && (favourites.data?.length ?? 0) > 0 && <span className="text-[10px] opacity-70">{favourites.data!.length}</span>}
-              </button>
-            ))}
-          </div>
-
-          {shelf === "search" && (
-            <>
-              <div className="flex gap-2">
-                <input value={q} onChange={(e) => setQ(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && q.trim()) { add({ medicine: q.trim(), isScheduleH: false }, true); setQ(""); } }}
-                  placeholder="Search the stock list — or type a name and press Enter for free text"
-                  className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2.5 py-2 text-[12.5px] outline-none focus:border-gold-dark" />
-                <Btn kind="ghost" className="!px-2.5 !py-1.5 !text-[11.5px]" disabled={!q.trim()}
-                  onClick={() => { add({ medicine: q.trim(), isScheduleH: false }, true); setQ(""); }}>Add</Btn>
-              </div>
-              <div className="mt-2 grid gap-1">
-                {search.trim().length < 2 && <div className="px-1 py-2 text-[11.5px] text-ink3">Type at least two letters to search what the clinic actually holds.</div>}
-                {search.trim().length >= 2 && (results.data ?? []).length === 0 && !results.loading && (
-                  <div className="px-1 py-2 text-[11.5px] text-ink3">Nothing in stock matches. Press Enter to prescribe it as free text.</div>
-                )}
-                {(results.data ?? []).map((p) => (
-                  <button key={p._id} type="button" onClick={() => { add(fromProduct(p), true); setQ(""); }}
-                    className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-surface px-2.5 py-2 text-left hover:bg-ivory">
-                    <span className="min-w-0">
-                      <span className="block truncate text-[12px] font-semibold text-ink">{p.name}</span>
-                      <span className="block text-[10.5px] text-ink3">{[p.formulation, p.brand, p.sku].filter(Boolean).join(" · ") || p.category}</span>
-                    </span>
-                    <span className="flex shrink-0 items-center gap-2">
-                      {p.isRx && <Tag kind="warn">Rx</Tag>}
-                      <StockPill status={p.status} qty={p.quantity} />
-                      <Plus className="h-3.5 w-3.5 text-primary" />
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-
-          {shelf === "favourites" && (
-            <div className="grid gap-1.5">
-              {(favourites.data ?? []).length === 0 && (
-                <Empty title="No saved prescriptions yet" hint="Write one, then use “Save as favourite”. It appears here for one tap next time." />
-              )}
-              {(favourites.data ?? []).map((f) => (
-                <div key={f._id} className="rounded-lg border border-border bg-surface px-2.5 py-2">
-                  <div className="flex items-center gap-2">
-                    <b className="text-[12.5px] text-ink">{f.name}</b>
-                    {f.category && <Tag kind="mute">{f.category}</Tag>}
-                    {f.scope === "clinic" && <Tag kind="info">{f.mine ? "Shared" : `by ${f.ownerName ?? "the clinic"}`}</Tag>}
-                    <span className="flex-1" />
-                    <Btn kind="ghost" className="!py-1 !text-[11px]" onClick={() => addFavourite(f)}>
-                      <span className="flex items-center gap-1"><Plus className="h-3 w-3" /> Add all</span>
-                    </Btn>
-                    {f.mine && (
-                      <button type="button" aria-label={`Remove ${f.name}`} className="text-ink3 hover:text-err"
-                        onClick={() => api.rxFavourites.remove(f._id).then(() => { favourites.reload(); setToast(`Removed ${f.name}`); }).catch((e) => setToast((e as Error).message))}>
-                        <Trash className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                  <ul className="mt-1 text-[11px] text-ink3">
-                    {f.items.slice(0, 4).map((i, j) => <li key={j}>{i.medicine}{summary(i) ? ` — ${summary(i)}` : ""}</li>)}
-                    {f.items.length > 4 && <li>+{f.items.length - 4} more</li>}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {shelf === "recent" && (
-            <div className="grid gap-1">
-              {(recent.data ?? []).length === 0 && (
-                <Empty title="Nothing yet" hint="The medicines you prescribe most will collect here, with the dose you last used." />
-              )}
-              {(recent.data ?? []).map((r: RxRecentItem, i) => (
-                <button key={i} type="button" onClick={() => add({ ...r, uses: undefined } as PrescriptionItem)}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-surface px-2.5 py-2 text-left hover:bg-ivory">
+    <div className="dz-stack">
+      <div data-tour="rx">
+        <Panel icon={<Pill />} title="This prescription"
+          sub={rx.length ? `${rx.length} medicine${rx.length === 1 ? "" : "s"}${locked ? "" : " · tap a line to change it"}` : "Nothing added yet"}
+          right={!locked && rx.length > 0 ? <Btn kind="secondary" size="sm" onClick={() => setSaveOpen(true)}><Star />Save as favourite</Btn> : undefined}>
+          {rx.length === 0 ? (
+            <div className="dz-hint">{locked ? "No medicines were prescribed." : "Search the stock, or add a favourite or something you prescribe often — below."}</div>
+          ) : (
+            <div className="dz-list">
+              {rx.map((m, i) => (
+                <button key={i} type="button" className="dz-rx-item" disabled={locked} onClick={() => setEditing(i)}>
+                  <span className="dz-rx-icon"><Pill /></span>
                   <span className="min-w-0">
-                    <span className="block truncate text-[12px] font-semibold text-ink">{r.medicine}</span>
-                    <span className="block text-[10.5px] text-ink3">{summary(r) || "no dose set"} · used {r.uses}×</span>
+                    <span className="dz-rx-item__name">{m.medicine}{m.isScheduleH && <span className="dz-pill dz-pill--sm dz-pill--warn">Schedule H</span>}</span>
+                    <span className="dz-rx-sig">{rxSummary(m) || <em>Tap to set the dose and duration</em>}</span>
+                    {m.instructions && <span className="dz-rx-note">{m.instructions}</span>}
                   </span>
-                  <Plus className="h-3.5 w-3.5 shrink-0 text-primary" />
+                  {!locked && <span className="dz-rx-edit">Edit</span>}
                 </button>
               ))}
             </div>
           )}
-        </div>
+        </Panel>
+      </div>
+
+      {!locked && (
+        <Panel icon={<Plus />} title="Add medicines">
+          <Segmented block value={shelf} onChange={setShelf} options={[
+            { key: "search", label: "Search stock", icon: <Search /> },
+            { key: "favourites", label: "Favourites", icon: <Star />, count: favs.length || undefined },
+            { key: "recent", label: "Often used", icon: <History /> },
+          ]} />
+
+          <div className="mt-4">
+            {shelf === "search" && (
+              <div className="dz-stack--sm">
+                <div className="dz-searchbox">
+                  <Search />
+                  <input className="dz-input" value={q} onChange={(e) => setQ(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") freeText(); }}
+                    placeholder="Tretinoin, sunscreen, biotin…" />
+                </div>
+                {search.trim().length < 2 && <div className="dz-hint">Type two letters to search what this centre holds. Anything not in stock can still be added as free text.</div>}
+                {q.trim().length >= 2 && (
+                  <button type="button" className="dz-result" onClick={freeText}>
+                    <span className="dz-result__txt"><b>Add “{q.trim()}”</b><small>As free text — not linked to stock</small></span>
+                    <span className="dz-result__add"><Plus /></span>
+                  </button>
+                )}
+                {(results.data ?? []).map((p) => (
+                  <button key={`${p.source}-${p._id}`} type="button" className="dz-result" onClick={() => { add(fromProduct(p), true); setQ(""); }}>
+                    <span className="dz-result__txt">
+                      <b>{p.name}</b>
+                      <small>{[p.formulation, p.brand, p.category].filter(Boolean).join(" · ") || "Product"}</small>
+                    </span>
+                    <span className="dz-result__side">
+                      {p.isRx && <Tag kind="warn">Rx</Tag>}
+                      <StockPill status={p.status} qty={p.quantity} />
+                      <span className="dz-result__add"><Plus /></span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {shelf === "favourites" && (
+              favs.length === 0 ? (
+                <Empty icon={<Star />} title="No favourites yet" hint="Write a prescription, then tap “Save as favourite”. It appears here for one tap next time." />
+              ) : (
+                <div className="dz-cards">
+                  {favs.map((f) => (
+                    <div key={f._id} className="dz-fav">
+                      <div className="dz-fav__name">
+                        {f.name}
+                        {f.scope === "clinic" && <Tag kind="info">{f.mine ? "Shared" : `by ${f.ownerName ?? "the clinic"}`}</Tag>}
+                      </div>
+                      {f.category && <div className="dz-hint">{f.category}</div>}
+                      <ul>
+                        {f.items.slice(0, 4).map((i, j) => <li key={j}>{i.medicine}{rxSummary(i) ? ` — ${rxSummary(i)}` : ""}</li>)}
+                        {f.items.length > 4 && <li className="dz-muted">+{f.items.length - 4} more</li>}
+                      </ul>
+                      <div className="dz-row mt-1">
+                        <Btn size="sm" onClick={() => addFavourite(f)}><Plus />Add all</Btn>
+                        {f.mine && (
+                          <button type="button" className="dz-iconbtn dz-iconbtn--plain" aria-label={`Delete ${f.name}`}
+                            onClick={() => api.rxFavourites.remove(f._id).then(() => { favourites.reload(); toast(`Removed ${f.name}`); }).catch((e) => toast((e as Error).message))}>
+                            <Trash2 />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+
+            {shelf === "recent" && (
+              (recent.data ?? []).length === 0 ? (
+                <Empty icon={<History />} title="Nothing here yet" hint="The medicines you prescribe most collect here, with the dose you last used." />
+              ) : (
+                <div className="dz-stack--sm">
+                  {(recent.data ?? []).map((r, i) => (
+                    <button key={i} type="button" className="dz-result" onClick={() => add({ ...r, uses: undefined } as PrescriptionItem)}>
+                      <span className="dz-result__txt"><b>{r.medicine}</b><small>{rxSummary(r) || "No dose set"} · used {r.uses} times</small></span>
+                      <span className="dz-result__add"><Plus /></span>
+                    </button>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+        </Panel>
       )}
 
-      {toast && (
-        <div className="mt-2 flex items-center gap-1.5 text-[11.5px] text-ok">
-          <Check className="h-3.5 w-3.5" />{toast}
-        </div>
-      )}
-
-      {editing && rx[editing.index] && (
+      {editing !== null && rx[editing] && (
         <RxItemEditor
-          item={rx[editing.index]}
+          item={rx[editing]}
           onClose={() => setEditing(null)}
-          onRemove={() => { setRx(rx.filter((_, j) => j !== editing.index)); setEditing(null); }}
-          onSave={(v) => {
-            setRx(rx.map((x, j) => (j === editing.index ? v : x)));
-            setEditing(null);
-          }}
+          onRemove={() => { setRx(rx.filter((_, j) => j !== editing)); setEditing(null); }}
+          onSave={(v) => { setRx(rx.map((x, j) => (j === editing ? v : x))); setEditing(null); }}
         />
       )}
       {saveOpen && (
         <SaveFavourite items={rx} onClose={() => setSaveOpen(false)}
-          onSaved={(name) => { setSaveOpen(false); favourites.reload(); setToast(`Saved “${name}”`); }} />
+          onSaved={(name) => { setSaveOpen(false); favourites.reload(); setShelf("favourites"); toast(`Saved “${name}”`); }} />
       )}
-    </Card>
+    </div>
   );
 }

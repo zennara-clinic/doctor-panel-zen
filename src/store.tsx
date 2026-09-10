@@ -277,12 +277,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={value}>
       {children}
-      <div className="pointer-events-none fixed bottom-5 left-1/2 z-[100] flex -translate-x-1/2 flex-col items-center gap-2">
-        {toasts.map((t) => (
-          <div key={t.id} className="pointer-events-auto rounded-xl bg-primary px-4 py-2.5 text-[13px] font-semibold text-white shadow-lg">
-            {t.msg}
-          </div>
-        ))}
+      <div className="dz-toasts" role="status" aria-live="polite">
+        {toasts.map((t) => <div key={t.id} className="dz-toast">{t.msg}</div>)}
       </div>
     </Ctx.Provider>
   );

@@ -75,35 +75,35 @@ export default function GuestPurchases({ userId, patient, compact }: {
   const limit = compact ? 4 : 20;
 
   return (
-    <Card className="p-4">
+    <Card className="p-5">
       <SecH t="What they've bought" em={compact ? undefined : "Products, packages and membership — no prices in the consult room"} />
       <Async q={q} label="" rows={2}>
         {({ orders, packages }) => {
           const nothing = orders.length === 0 && packages.length === 0 && !isZenMember;
           if (nothing) {
-            return <div className="text-[11.5px] text-ink3">Nothing bought yet — no products, packages or membership on this guest.</div>;
+            return <div className="text-[13.5px] text-ink3">Nothing bought yet — no products, packages or membership on this guest.</div>;
           }
           return (
             <div className="grid gap-3">
               {isZenMember && (
-                <div className="flex items-center gap-2 rounded-lg bg-sage px-2.5 py-2">
-                  <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
-                  <span className="text-[12px] font-semibold text-ink">Zen Member</span>
-                  {membershipEnds && <span className="text-[11px] text-ink3">until {fmtDate(membershipEnds)}</span>}
+                <div className="flex items-center gap-2 rounded-xl bg-sage px-3 py-2.5">
+                  <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+                  <span className="text-[14px] font-semibold text-ink">Zen Member</span>
+                  {membershipEnds && <span className="text-[12.5px] text-ink3">until {fmtDate(membershipEnds)}</span>}
                 </div>
               )}
 
               {packages.length > 0 && (
                 <div>
-                  <div className="mb-1 flex items-center gap-1.5 font-mono text-[9.5px] font-bold uppercase tracking-[0.1em] text-ink3">
-                    <PackageIcon className="h-3 w-3" /> Packages
+                  <div className="mb-1 flex items-center gap-1.5 text-[13px] font-extrabold text-ink2">
+                    <PackageIcon className="h-4 w-4" /> Packages
                   </div>
                   <div className="grid gap-1">
                     {packages.slice(0, limit).map((a) => {
                       const used = a.usageTracking?.usedSessions ?? 0;
                       const total = a.usageTracking?.totalSessions ?? 0;
                       return (
-                        <div key={a._id} className="flex items-center gap-2 border-b border-border/60 py-1 last:border-0 text-[11.5px]">
+                        <div key={a._id} className="flex items-center gap-2 border-b border-border py-2 last:border-0 text-[13.5px]">
                           <span className="min-w-0 flex-1 truncate text-ink2">{a.packageDetails?.packageName ?? "Package"}</span>
                           {total > 0 && (
                             <span className={`shrink-0 tabular-nums ${used >= total ? "text-ink3" : "font-semibold text-ink"}`}>
@@ -120,13 +120,13 @@ export default function GuestPurchases({ userId, patient, compact }: {
 
               {orders.length > 0 && (
                 <div>
-                  <div className="mb-1 flex items-center gap-1.5 font-mono text-[9.5px] font-bold uppercase tracking-[0.1em] text-ink3">
-                    <ShoppingBag className="h-3 w-3" /> Products
+                  <div className="mb-1 flex items-center gap-1.5 text-[13px] font-extrabold text-ink2">
+                    <ShoppingBag className="h-4 w-4" /> Products
                   </div>
                   <div className="grid gap-1">
                     {orders.slice(0, limit).map((o) => (
-                      <div key={o._id} className="border-b border-border/60 py-1 last:border-0">
-                        <div className="flex items-center gap-2 text-[11.5px]">
+                      <div key={o._id} className="border-b border-border py-2 last:border-0">
+                        <div className="flex items-center gap-2 text-[13.5px]">
                           <span className="shrink-0 text-ink3">{fmtDate(o.createdAt)}</span>
                           <span className="min-w-0 flex-1 truncate text-ink2">
                             {linesOf(o).map((l) => `${l.name}${l.qty > 1 ? ` ×${l.qty}` : ""}`).join(", ") || "—"}
@@ -136,7 +136,7 @@ export default function GuestPurchases({ userId, patient, compact }: {
                       </div>
                     ))}
                     {orders.length > limit && (
-                      <div className="pt-1 text-[11px] text-ink3">+{orders.length - limit} earlier order{orders.length - limit === 1 ? "" : "s"}</div>
+                      <div className="pt-1 text-[12.5px] text-ink3">+{orders.length - limit} earlier order{orders.length - limit === 1 ? "" : "s"}</div>
                     )}
                   </div>
                 </div>

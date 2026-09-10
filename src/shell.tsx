@@ -1,84 +1,73 @@
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  LayoutDashboard, CalendarDays, BookOpenCheck, Users, Stethoscope,
-  MessagesSquare, Sparkles, FolderTree, Package, UserCog, ShoppingBag,
-  Tags, TicketPercent, Truck, Boxes, Building2, Store, Star, BarChart3, ShieldCheck,
-  Smartphone, MessageSquareText, CreditCard, BellRing, ToggleRight,
-  ClipboardList, CalendarClock, MapPin, Search, Bell, ChevronDown,
-  ScrollText, IdCard, Mic, Pill, Receipt, FlaskConical, LifeBuoy, Loader2, CheckCheck, ArrowRight, PackageSearch,
+  BarChart3, CalendarClock, Camera, ChevronDown, ChevronRight, Loader2, LogOut, MapPin, PackageSearch,
+  Pill, PlayCircle, Search, Stethoscope, Sun, UserRound, Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useStore, ROLE_LABEL, panelAccepts, wrongPanelMessage, type Role } from "./store";
+import { useStore, ROLE_LABEL, panelAccepts, wrongPanelMessage } from "./store";
 import { replayTour } from "./tours";
 import { useMyDoctor } from "./lib/useMe";
 import { Menu } from "./ui";
 import api from "./lib/api";
-import { useApi, useDebounced, usePoll } from "./lib/useApi";
-import { fmtAgo, initials } from "./lib/format";
+import { useApi, useBookingUpdates, useDebounced, usePoll } from "./lib/useApi";
+import { initials, isoDay } from "./lib/format";
 import type { Admin } from "./lib/types";
 import { ApiError } from "./lib/http";
 import logo from "./assets/zennara-logo.png";
 
-type NavItem = { to: string; label: string; icon: ReactNode; badge?: "bookings" | "chat" | "orders" | "lowstock" | "reviews" };
-type NavGroup = { g: string; items: NavItem[] };
-const ic = "h-[16px] w-[16px]";
+type NavItem = { to: string; label: string; icon: ReactNode; tour: string; badge?: "waiting" };
 
-const NAV: NavGroup[] = [
-  { g: "Clinical", items: [
-    { to: "/dermatologist/my-day", label: "My day", icon: <CalendarDays className={ic} /> },
-    { to: "/dermatologist/consultation", label: "Consultation", icon: <Stethoscope className={ic} /> },
-    { to: "/dermatologist/my-patients", label: "My patients", icon: <Users className={ic} /> },
-  ]},
-  { g: "Me", items: [
-    { to: "/dermatologist/month", label: "My month", icon: <BarChart3 className={ic} /> },
-    { to: "/dermatologist/schedule", label: "My schedule", icon: <CalendarClock className={ic} /> },
-    { to: "/dermatologist/availability", label: "My centres", icon: <MapPin className={ic} /> },
-    { to: "/dermatologist/stock", label: "Product availability", icon: <PackageSearch className={ic} /> },
-    { to: "/dermatologist/profile", label: "My profile", icon: <IdCard className={ic} /> },
-  ]},
+/*
+ * Five destinations, nothing nested. A dermatologist opens this between
+ * guests with one hand; every extra level is a guest kept waiting.
+ */
+const NAV: NavItem[] = [
+  { to: "/dermatologist/my-day", label: "Today", icon: <Sun />, tour: "nav-my-day", badge: "waiting" },
+  { to: "/dermatologist/my-patients", label: "Patients", icon: <Users />, tour: "nav-my-patients" },
+  { to: "/dermatologist/schedule", label: "Schedule", icon: <CalendarClock />, tour: "nav-schedule" },
+  { to: "/dermatologist/stock", label: "Products", icon: <PackageSearch />, tour: "nav-stock" },
+  { to: "/dermatologist/month", label: "Insights", icon: <BarChart3 />, tour: "nav-month" },
 ];
 
 export const HOME = "/dermatologist/my-day";
 
-/* ================= live sidebar badges ================= */
-function useNavBadges(role: Role, branchId: string) {
-  return useApi(async () => {
-    if (role !== "admin") return {} as Record<string, number>;
-
-    const settled = await Promise.allSettled([
-      api.bookings.list({ status: "Awaiting Confirmation", limit: 1 }),
-      api.chat.stats(branchId || undefined),
-      api.orders.stats(),
-      api.analytics.inventory(),
-      api.reviews.products({ isApproved: "false", limit: 1 }),
-    ]);
-
-    const val = <T,>(i: number): T | undefined =>
-      settled[i].status === "fulfilled" ? ((settled[i] as PromiseFulfilledResult<T>).value) : undefined;
-
-    const pending = val<{ total?: number; count?: number; data?: unknown[] }>(0);
-    const chatStats = val<{ overall?: { totalUnread?: number; activeChats?: number }; byBranch?: { branchId: string; totalUnread: number; activeChats: number }[] }>(1);
-    const orderStats = val<{ newOrders?: number; processingOrders?: number; confirmedOrders?: number }>(2);
-    const inv = val<{ summary?: { lowStockCount?: number } }>(3);
-    const rev = val<{ count?: number; pagination?: { total?: number } }>(4);
-
-    const mine = branchId
-      ? (chatStats?.byBranch ?? []).find((b) => String(b.branchId) === branchId)
-      : { totalUnread: (chatStats?.byBranch ?? []).reduce((a, b) => a + (b.totalUnread || 0), 0), activeChats: (chatStats?.byBranch ?? []).reduce((a, b) => a + (b.activeChats || 0), 0) };
-
-    return {
-      bookings: pending?.total ?? pending?.count ?? pending?.data?.length ?? 0,
-      // Unread first; fall back to open threads so the badge still signals work.
-      chat: mine?.totalUnread || mine?.activeChats || 0,
-      orders: (orderStats?.newOrders ?? 0) + (orderStats?.confirmedOrders ?? 0) + (orderStats?.processingOrders ?? 0),
-      lowstock: inv?.summary?.lowStockCount ?? 0,
-      reviews: rev?.pagination?.total ?? rev?.count ?? 0,
-    } as Record<string, number>;
-  }, [role, branchId]);
+/**
+ * Three shapes, chosen by width, and one by task:
+ *
+ *   > 1100px   full sidebar — a tablet in landscape
+ *   ≤ 1100px   icon rail — a tablet in portrait
+ *   ≤ 720px    bottom tab bar — a phone
+ *
+ * The consultation workspace always takes the rail, whatever the width, so the
+ * guest summary and the note can sit side by side on a landscape tablet.
+ */
+export type Layout = "full" | "rail" | "phone";
+function useLayout(inConsult: boolean): Layout {
+  const [width, setWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  if (width <= 720) return "phone";
+  if (width <= 1100 || inConsult) return "rail";
+  return "full";
 }
 
-/* ================= global search ================= */
+/** Guests checked in and waiting for this dermatologist right now — the one number worth a badge. */
+function useWaitingCount(doctorId: string | undefined) {
+  const q = useApi(async () => {
+    if (!doctorId) return 0;
+    const res = await api.bookings.list({ specialistId: doctorId, date: isoDay(), status: "Checked In" });
+    return (res.data ?? []).length;
+  }, [doctorId]);
+  useBookingUpdates(q.reload, !!doctorId);
+  usePoll(q.reload, 60000, !!doctorId);
+  return q.data ?? 0;
+}
+
+/* ================= patient search ================= */
 function SearchOverlay() {
   const { searchOpen, setSearchOpen } = useStore();
   const [q, setQ] = useState("");
@@ -87,44 +76,40 @@ function SearchOverlay() {
 
   useEffect(() => { if (searchOpen) setQ(""); }, [searchOpen]);
 
-  // A dermatologist searches people, nothing else — services, products and
-  // bookings are admin territory and their screens don't exist in this panel.
   const results = useApi(async () => {
     const term = debounced.trim();
-    if (!searchOpen || term.length < 2) return { patients: [] as { _id: string; fullName: string; phone: string; location?: string }[] };
+    if (!searchOpen || term.length < 2) return [] as { _id: string; fullName: string; phone: string; patientId?: string; location?: string }[];
     const res = await api.patients.list({ search: term, limit: 8 }).catch(() => ({} as { data?: { users?: unknown[] } }));
     const users = (res as { data?: { users?: unknown[] } }).data?.users ?? [];
-    return { patients: users.slice(0, 8) as { _id: string; fullName: string; phone: string; location?: string }[] };
+    return users.slice(0, 8) as { _id: string; fullName: string; phone: string; patientId?: string; location?: string }[];
   }, [debounced, searchOpen]);
 
   if (!searchOpen) return null;
-
-  const go = (path: string, state?: object) => { setSearchOpen(false); nav(path, { state }); };
-  const r = results.data ?? { patients: [] };
+  const rows = results.data ?? [];
+  const go = (id: string) => { setSearchOpen(false); nav(`/dermatologist/patient?id=${id}`, { state: { id } }); };
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-start justify-center p-4 pt-[10vh]">
-      <div className="absolute inset-0 bg-primary/40 backdrop-blur-[2px]" onClick={() => setSearchOpen(false)} />
-      <div className="relative w-full max-w-[560px] overflow-hidden rounded-(--radius-lg2) bg-surface shadow-2xl">
-        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
-          <Search className="h-4 w-4 text-ink3" />
-          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your patients…"
-            className="flex-1 bg-transparent text-[14px] outline-none" />
-          {results.loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-ink3" />}
-          <kbd className="rounded border border-border bg-ivory px-1.5 font-mono text-[10px] text-ink3">esc</kbd>
+    <div className="dz-scrim dz-scrim--top" onMouseDown={(e) => { if (e.target === e.currentTarget) setSearchOpen(false); }}>
+      <div className="dz-spotlight" role="dialog" aria-label="Search patients">
+        <div className="dz-spotlight__bar">
+          <Search />
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search a guest by name, phone or ID" />
+          {results.loading && q.trim().length >= 2 && <Loader2 className="h-5 w-5 animate-spin text-ink3" />}
+          <button type="button" className="dz-btn dz-btn--ghost dz-btn--sm" onClick={() => setSearchOpen(false)}>Close</button>
         </div>
-        <div className="max-h-[50vh] overflow-auto p-2">
-          {q.trim().length < 2 && (
-            <div className="px-3 py-6 text-center text-[12.5px] text-ink3">Type at least two characters to search patients by name or phone.</div>
+        <div className="dz-spotlight__list">
+          {q.trim().length < 2 && <div className="px-3 py-8 text-center text-[14px] text-ink3">Type at least two letters.</div>}
+          {q.trim().length >= 2 && !rows.length && !results.loading && (
+            <div className="px-3 py-8 text-center text-[14px] text-ink3">No guest matches “{q}”.</div>
           )}
-          {q.trim().length >= 2 && !r.patients.length && !results.loading && (
-            <div className="px-3 py-6 text-center text-[12.5px] text-ink3">Nothing matched “{q}”.</div>
-          )}
-          {r.patients.length > 0 && <div className="px-3 pt-2 font-mono text-[9.5px] font-bold uppercase tracking-[0.12em] text-ink3">Patients</div>}
-          {r.patients.map((p) => (
-            <button key={p._id} onClick={() => go("/dermatologist/patient", { id: p._id })}
-              className="block w-full rounded-lg px-3 py-2 text-left text-[13px] hover:bg-ivory">
-              <b className="font-semibold">{p.fullName}</b> <span className="text-ink3">· {p.phone}{p.location ? ` · ${p.location}` : ""}</span>
+          {rows.map((p) => (
+            <button key={p._id} type="button" className="dz-prow" style={{ gridTemplateColumns: "44px minmax(0,1fr) 20px", minHeight: 64 }} onClick={() => go(p._id)}>
+              <span className="dz-avatar dz-avatar--sage">{initials(p.fullName)}</span>
+              <span className="min-w-0">
+                <span className="dz-prow__name">{p.fullName}</span>
+                <span className="dz-prow__sub">{[p.patientId, p.phone, p.location].filter(Boolean).join(" · ")}</span>
+              </span>
+              <ChevronRight />
             </button>
           ))}
         </div>
@@ -136,17 +121,16 @@ function SearchOverlay() {
 /* ================= shell ================= */
 export function Shell({ children }: { children: ReactNode }) {
   const {
-    role, admin, adminRole, branch, branchId, branches, branchesLoading, setBranchById,
+    admin, adminRole, branch, branchId, branches, branchesLoading, setBranchById,
     toast, setSearchOpen, loggedIn, booting, signIn, logout,
   } = useStore();
   const loc = useLocation();
   const nav = useNavigate();
-  const badges = useNavBadges(role, branchId);
+  const layout = useLayout(loc.pathname.startsWith("/dermatologist/consultation"));
 
   // A dermatologist's world is their assigned centres, not the whole clinic.
-  // The header offers only those; a stored branch outside them is dropped so
-  // no screen quietly filters to a centre they don't work at.
   const myDoctor = useMyDoctor();
+  const waiting = useWaitingCount(loggedIn ? myDoctor.data?.doctorId : undefined);
   const myCentreNames = myDoctor.data?.availableCentres ?? [];
   const myBranches = branches.filter((b) => myCentreNames.includes(b.name));
   const branchLabel = branchId
@@ -173,10 +157,10 @@ export function Shell({ children }: { children: ReactNode }) {
 
   if (booting) {
     return (
-      <div className="grid min-h-screen place-items-center bg-bg">
-        <div className="flex flex-col items-center gap-3">
-          <img src={logo} alt="Zennara" className="h-16 w-auto object-contain opacity-80" />
-          <Loader2 className="h-5 w-5 animate-spin text-gold-dark" />
+      <div className="dz-boot">
+        <div className="grid justify-items-center gap-4">
+          <img src={logo} alt="Zennara" />
+          <Loader2 className="h-6 w-6 animate-spin text-secondary" />
         </div>
       </div>
     );
@@ -186,138 +170,92 @@ export function Shell({ children }: { children: ReactNode }) {
     return <LoginPage onSignedIn={(token, me, exp) => { signIn(token, me, exp); nav(HOME); }} />;
   }
 
-  // A temporary password issued by an administrator must be replaced before
-  // the panel opens.
   if (admin?.mustChangePassword) {
-    return <ChoosePasswordPage label="Dermatologist panel" onDone={(token, me, exp) => signIn(token, me, exp)} />;
+    return <ChoosePasswordPage onDone={(token, me, exp) => signIn(token, me, exp)} />;
   }
 
-  const who = {
-    init: initials(admin?.name || admin?.email),
-    name: admin?.name || admin?.email || "Signed in",
-    role: adminRole ? ROLE_LABEL[adminRole] : "",
-  };
-  const badgeCounts = badges.data ?? {};
+  const name = myDoctor.data?.name || admin?.name || admin?.email || "Signed in";
+  const role = adminRole ? ROLE_LABEL[adminRole] : "Dermatologist";
+  const photo = admin?.photo || myDoctor.data?.photo || null;
+  const avatar = (cls = "") => (
+    <span className={`dz-avatar ${cls}`}>{photo ? <img src={photo} alt="" /> : initials(name)}</span>
+  );
+
+  const centre = myBranches.length <= 1 ? (
+    <span data-tour="branch" className="dz-centre" title="Your centre">
+      <MapPin /><span>{myBranches[0]?.name ?? (myDoctor.loading || branchesLoading ? "…" : "No centre assigned")}</span>
+    </span>
+  ) : (
+    <Menu
+      button={<button type="button" data-tour="branch" className="dz-centre"><MapPin /><span>{branchLabel}</span><ChevronDown /></button>}
+      items={[
+        { label: "All my centres", icon: <MapPin />, onClick: () => { setBranchById(""); toast("Showing all your centres"); } },
+        ...myBranches.map((b) => ({
+          label: <span className={b._id === branchId ? "font-extrabold text-primary" : ""}>{b.name}</span>,
+          icon: <MapPin />,
+          onClick: () => { setBranchById(b._id); toast(`Switched to ${b.name}`); },
+        })),
+      ]}
+    />
+  );
 
   return (
-    /*
-     * Three shapes, one markup, matching the consult-room device.
-     *
-     *   > 1100px   full 236px sidebar — a tablet in landscape, or a desktop tab
-     *   ≤ 1100px   76px icon rail — a tablet in portrait, where 236px of nav is
-     *              a quarter of the screen the dermatologist is reading from
-     *   ≤ 720px    bottom bar — a phone, thumbs at the bottom
-     *
-     * Rows are 48px tall throughout. They used to be 26px, which is a mouse
-     * target, not a finger one.
-     */
-    <div className="flex min-h-screen items-start max-[720px]:block">
-      <aside
-        className="sticky top-0 z-30 flex h-screen w-[236px] shrink-0 flex-col bg-side px-3 pb-2 pt-4 text-side-ink
-                   max-[1100px]:w-[76px] max-[1100px]:items-center max-[1100px]:px-2
-                   max-[720px]:fixed max-[720px]:inset-x-0 max-[720px]:bottom-0 max-[720px]:top-auto max-[720px]:h-auto
-                   max-[720px]:w-full max-[720px]:flex-row max-[720px]:px-2 max-[720px]:pb-[max(0.375rem,env(safe-area-inset-bottom))] max-[720px]:pt-1.5">
-        <div data-tour="logo" className="flex shrink-0 items-center gap-2.5 px-2.5 pb-4 pt-1 max-[1100px]:flex-col max-[1100px]:gap-1.5 max-[1100px]:px-0 max-[720px]:hidden">
-          <img src={logo} alt="Zennara" className="h-10 w-auto object-contain opacity-95 brightness-0 invert max-[1100px]:h-[30px]" />
-          <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-side-mut max-[1100px]:hidden">Dermatologist</span>
+    <div className={`dz-app ${layout === "full" ? "" : `dz-app--${layout}`}`}>
+      <aside className="dz-side">
+        <div data-tour="logo" className="dz-brand">
+          <img src={logo} alt="Zennara" />
+          <span>Dermatologist</span>
         </div>
 
-        <div data-tour="nav"
-          className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pb-1 [scrollbar-color:var(--color-gold-dark)_transparent] [scrollbar-width:thin]
-                     max-[1100px]:w-full max-[720px]:flex-row max-[720px]:justify-around max-[720px]:overflow-visible max-[720px]:pb-0">
-          {NAV.map((grp) => (
-            <div key={grp.g} className="max-[720px]:contents">
-              <div className="px-3 pb-0.5 pt-2.5 font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-side-mut max-[1100px]:hidden">{grp.g}</div>
-              {grp.items.map((it) => {
-                const n = it.badge ? badgeCounts[it.badge] : undefined;
-                const active = loc.pathname === it.to;
-                return (
-                  <NavLink key={it.to} to={it.to} data-tour={"nav-" + it.to.split("/").filter(Boolean).pop()}
-                    title={it.label}
-                    className={({ isActive }) =>
-                      `relative flex min-h-[48px] items-center justify-between gap-3 rounded-xl px-3 text-[14px] font-semibold transition-colors
-                       max-[1100px]:justify-center max-[1100px]:px-0
-                       max-[720px]:min-h-[44px] max-[720px]:flex-1 ${
-                        isActive || active
-                          ? "bg-white/[0.08] text-white before:absolute before:inset-y-3 before:left-0 before:w-[3px] before:rounded-[3px] before:bg-gold before:content-[''] max-[720px]:before:inset-x-3 max-[720px]:before:inset-y-auto max-[720px]:before:bottom-0 max-[720px]:before:h-[3px] max-[720px]:before:w-auto"
-                          : "hover:bg-white/[0.06] hover:text-white"}`}>
-                    <span className="flex items-center gap-3 max-[1100px]:gap-0">
-                      {it.icon}
-                      <em className="not-italic max-[1100px]:hidden">{it.label}</em>
-                    </span>
-                    {!!n && n > 0 && (
-                      <span className="rounded-full bg-gold px-1.5 font-mono text-[10px] font-bold text-primary max-[1100px]:absolute max-[1100px]:right-2 max-[1100px]:top-1.5 max-[1100px]:px-1">
-                        {n > 99 ? "99+" : n}
-                      </span>
-                    )}
-                  </NavLink>
-                );
-              })}
-            </div>
-          ))}
-        </div>
+        <nav data-tour="nav" className="dz-nav" aria-label="Main">
+          {NAV.map((it) => {
+            const n = it.badge === "waiting" ? waiting : 0;
+            return (
+              <NavLink key={it.to} to={it.to} title={it.label} data-tour={it.tour}
+                className={({ isActive }) => (isActive ? "active" : "")}>
+                {it.icon}
+                <span>{it.label}</span>
+                {n > 0 && <span className="dz-nav__badge" aria-label={`${n} waiting`}>{n > 9 ? "9+" : n}</span>}
+              </NavLink>
+            );
+          })}
+        </nav>
 
-        <div className="flex shrink-0 items-center gap-2.5 border-t border-white/10 px-3 pb-0.5 pt-3 max-[1100px]:flex-col max-[1100px]:border-0 max-[1100px]:px-0 max-[720px]:hidden">
-          <span className="grid h-9 w-9 flex-none place-items-center rounded-full bg-gold text-[13px] font-extrabold text-primary">
-            {initials(who.name)}
+        <div className="dz-side__spacer" />
+        <button type="button" data-tour="nav-profile" className="dz-me" onClick={() => nav("/dermatologist/profile")} title="My profile">
+          {avatar()}
+          <span className="dz-me__txt">
+            <b>{name}</b>
+            <span>{role}{branchLabel ? ` · ${branchLabel}` : ""}</span>
           </span>
-          <div className="min-w-0 leading-tight max-[1100px]:hidden">
-            <div className="truncate text-[13px] font-bold text-white">{who.name}</div>
-            <div className="truncate text-[12px] text-side-mut">{who.role}{branchLabel ? ` · ${branchLabel}` : ""}</div>
-          </div>
-        </div>
+        </button>
       </aside>
 
-      {/* The bottom bar is fixed, so the last card needs room to clear it. */}
-      <div className="flex min-h-screen min-w-0 flex-1 flex-col max-[720px]:pb-[86px]">
-        <header className="sticky top-0 z-40 flex flex-wrap items-center gap-3 border-b border-border bg-surface px-5 py-2.5 max-[720px]:px-4">
-          {myBranches.length <= 1 ? (
-            /* One centre (or none): nothing to switch, so state it instead of
-               offering a dead menu. */
-            <div data-tour="branch" className="flex items-center gap-1.5 px-2 py-1 text-[13.5px] font-bold">
-              <MapPin className="h-3.5 w-3.5 text-gold-dark" />
-              {myBranches[0]?.name ?? (myDoctor.loading || branchesLoading ? "…" : "No centre assigned yet")}
-            </div>
-          ) : (
-            <Menu
-              button={
-                <button data-tour="branch" className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13.5px] font-bold hover:bg-ivory">
-                  <MapPin className="h-3.5 w-3.5 text-gold-dark" />
-                  {branchLabel} <ChevronDown className="h-3.5 w-3.5 text-ink3" />
-                </button>
-              }
-              items={[
-                { label: <span className={!branchId ? "font-bold text-primary" : ""}>All my centres</span>,
-                  onClick: () => { setBranchById(""); toast("Showing all your centres"); } },
-                ...myBranches.map((b) => ({
-                  label: <span className={b._id === branchId ? "font-bold text-primary" : ""}>{b.name}</span>,
-                  onClick: () => { setBranchById(b._id); toast(`Switched to ${b.name}`); },
-                })),
-              ]}
-            />
-          )}
-          <button data-tour="search" onClick={() => setSearchOpen(true)}
-            className="mx-auto flex w-full min-w-[160px] max-w-[440px] flex-1 items-center justify-between rounded-(--radius-btn) border border-border bg-ivory px-3 py-1.5 text-[12.5px] text-ink3 hover:border-gold-dark">
-            <span className="flex items-center gap-2"><Search className="h-3.5 w-3.5" /> Search your patients…</span>
-            <kbd className="rounded border border-border bg-surface px-1.5 font-mono text-[10px]">⌘K</kbd>
+      <div className="dz-main">
+        <header className="dz-top">
+          <img src={logo} alt="Zennara" className="dz-top__logo" />
+          {centre}
+          <button type="button" data-tour="search" className="dz-search" onClick={() => setSearchOpen(true)}>
+            <Search /> Search guests
+            <kbd>⌘K</kbd>
           </button>
-          <div className="flex items-center gap-3">
+          <div className="dz-top__right">
+            {layout !== "full" && (
+              <button type="button" className="dz-iconbtn" onClick={() => setSearchOpen(true)} aria-label="Search guests"><Search /></button>
+            )}
             <Menu align="right"
-              button={
-                <button className="grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-secondary text-[10.5px] font-bold text-white">
-                  {admin?.photo ? <img src={admin.photo} alt="" className="h-full w-full object-cover" /> : who.init}
-                </button>
-              }
+              button={<button type="button" className="dz-avatar" aria-label="Account" style={{ padding: 0, border: 0, cursor: "pointer" }}>{photo ? <img src={photo} alt="" /> : initials(name)}</button>}
               items={[
-                { label: <span><b>{who.name}</b><br /><span className="text-[11px] text-ink3">{who.role}{branchLabel ? ` · ${branchLabel}` : ""}</span></span> },
-                { label: "My profile", onClick: () => nav("/dermatologist/profile") },
-                { label: "View tutorial again", onClick: () => { replayTour(); toast("Starting the walkthrough"); } },
-                { label: "Sign out", onClick: () => { logout(); toast("Signed out"); } },
+                { label: <><b>{name}</b>{role}{branchLabel ? ` · ${branchLabel}` : ""}</> },
+                { label: "My profile", icon: <UserRound />, onClick: () => nav("/dermatologist/profile") },
+                { label: "Show the walkthrough", icon: <PlayCircle />, onClick: () => { replayTour(); toast("Starting the walkthrough"); } },
+                { divider: true, label: "" },
+                { label: "Sign out", icon: <LogOut />, danger: true, onClick: () => { logout(); toast("Signed out"); } },
               ]}
             />
           </div>
         </header>
-        <main className="min-w-0 flex-1 overflow-x-hidden bg-bg p-5">{children}</main>
+        <main className="min-w-0 flex-1">{children}</main>
       </div>
       <SearchOverlay />
     </div>
@@ -325,6 +263,29 @@ export function Shell({ children }: { children: ReactNode }) {
 }
 
 /* ================= login ================= */
+function LoginFrame({ children }: { children: ReactNode }) {
+  return (
+    <div className="dz-login">
+      <div className="dz-login__brand">
+        <img src={logo} alt="Zennara" />
+        <div>
+          <h1>Your day, your guests, one screen.</h1>
+          <p>Built for the tablet in the consult room — see who is waiting, write the note, prescribe and photograph without leaving the guest.</p>
+          <ul className="dz-login__points">
+            <li><span><Stethoscope /></span>Today’s guests, in the order they arrive</li>
+            <li><span><Pill /></span>Prescriptions in a few taps</li>
+            <li><span><Camera /></span>Before and after photos, side by side</li>
+          </ul>
+        </div>
+        <div className="dz-login__foot">Dermatologist panel</div>
+      </div>
+      <div className="dz-login__form">
+        <div className="dz-login__box">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 function LoginPage({ onSignedIn }: { onSignedIn: (token: string, admin: Admin, expiresAt?: string) => void }) {
   const [step, setStep] = useState<"email" | "password" | "otp">("email");
   const [email, setEmail] = useState("");
@@ -388,92 +349,68 @@ function LoginPage({ onSignedIn }: { onSignedIn: (token: string, admin: Admin, e
     } catch (err) { fail(err); setOtp(""); } finally { setBusy(false); }
   };
 
-  // One quiet column on the clinic green: the white logo above a plain card.
-  // No carousel, no notice bubbles, no footer copy — the field and the button.
-  const field = "w-full rounded-xl border border-border bg-ivory px-4 py-3 text-[14px] text-ink outline-none transition-colors placeholder:text-ink3/60 focus:border-primary focus:bg-surface";
-  const primary = "flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-[14px] font-bold text-white transition-colors hover:bg-primary-hover disabled:bg-dis-bg disabled:text-dis";
-
   return (
-    <div className="flex min-h-screen items-center justify-center bg-side px-6 py-12">
-      <div className="w-full max-w-[380px]">
-        <img src={logo} alt="Zennara" className="mx-auto h-20 w-auto object-contain" />
-        <div className="mt-8 rounded-3xl bg-surface p-8 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.45)]">
-          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-ink3">Dermatologist panel</div>
-          <h1 className="mt-1.5 text-[24px] font-extrabold leading-tight tracking-tight text-ink">
-            {step === "email" ? "Sign in" : step === "password" ? "Your password" : "Enter your code"}
-          </h1>
-          <p className="mt-1 text-[13px] text-ink3">
-            {step === "email" ? "Your work email, then your password or a one-time code." : <>Signing in as <span className="font-semibold text-ink2">{addr}</span></>}
-          </p>
+    <LoginFrame>
+      <div className="text-[13px] font-extrabold uppercase tracking-[0.14em] text-ink3">Dermatologist panel</div>
+      <h2>{step === "email" ? "Sign in" : step === "password" ? "Your password" : "Enter your code"}</h2>
+      <p className="mb-6 text-[14.5px] text-ink2">
+        {step === "email" ? "Use your work email. You’ll get a password box or a one-time code." : <>Signing in as <b className="text-ink">{addr}</b></>}
+      </p>
 
-          <div className="mt-6 grid gap-3">
-            {step === "email" ? (
-              <>
-                <input id="login-email" autoFocus value={email} type="email" autoComplete="email" aria-label="Email"
-                  onChange={(e) => { setEmail(e.target.value); setError(null); }}
-                  onKeyDown={(e) => e.key === "Enter" && !busy && continueFromEmail()}
-                  placeholder="you@zennara.in" className={field} />
-                <button onClick={continueFromEmail} disabled={busy} className={primary}>
-                  {busy && <Loader2 className="h-4 w-4 animate-spin" />} Continue
-                </button>
-              </>
-            ) : step === "password" ? (
-              <>
-                <input id="login-password" autoFocus value={password} type="password" autoComplete="current-password" aria-label="Password"
-                  onChange={(e) => { setPassword(e.target.value); setError(null); }}
-                  onKeyDown={(e) => e.key === "Enter" && !busy && signInWithPassword()}
-                  placeholder="Password" className={field} />
-                <button onClick={signInWithPassword} disabled={busy || !password} className={primary}>
-                  {busy && <Loader2 className="h-4 w-4 animate-spin" />} Sign in
-                </button>
-                <div className="flex items-center justify-between pt-1 text-[12.5px]">
-                  <button className="font-semibold text-ink3 transition-colors hover:text-ink"
-                    onClick={() => { setStep("email"); setPassword(""); setError(null); }}>
-                    Use another email
-                  </button>
-                  <button className="font-semibold text-primary" disabled={busy} onClick={sendOtp}>
-                    Email me a code instead
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <input id="login-otp" autoFocus value={otp} inputMode="numeric" maxLength={6} autoComplete="one-time-code" aria-label="6-digit code"
-                  onChange={(e) => { setOtp(e.target.value.replace(/\D/g, "")); setError(null); }}
-                  onKeyDown={(e) => e.key === "Enter" && !busy && verify()}
-                  placeholder="······"
-                  className={`${field} text-center font-mono text-[24px] font-bold tracking-[0.45em]`} />
-                <button onClick={verify} disabled={busy || otp.length !== 6} className={primary}>
-                  {busy && <Loader2 className="h-4 w-4 animate-spin" />} Sign in
-                </button>
-                <div className="flex items-center justify-between pt-1 text-[12.5px]">
-                  <button className="font-semibold text-ink3 transition-colors hover:text-ink"
-                    onClick={() => { setStep("email"); setOtp(""); setError(null); }}>
-                    Use another email
-                  </button>
-                  <button className="font-semibold text-primary disabled:text-dis" disabled={busy || cooldown > 0} onClick={resend}>
-                    {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
-                  </button>
-                </div>
-              </>
-            )}
-            {error && <p role="alert" className="text-[12.5px] font-semibold text-err">{error}</p>}
-          </div>
-        </div>
+      <div className="grid gap-3">
+        {step === "email" ? (
+          <>
+            <input autoFocus value={email} type="email" autoComplete="email" aria-label="Email"
+              onChange={(e) => { setEmail(e.target.value); setError(null); }}
+              onKeyDown={(e) => e.key === "Enter" && !busy && continueFromEmail()}
+              placeholder="you@zennara.in" className="dz-input" style={{ minHeight: 54 }} />
+            <button type="button" onClick={continueFromEmail} disabled={busy} className="dz-btn dz-btn--primary dz-btn--lg dz-btn--block">
+              {busy && <Loader2 className="animate-spin" />} Continue
+            </button>
+          </>
+        ) : step === "password" ? (
+          <>
+            <input autoFocus value={password} type="password" autoComplete="current-password" aria-label="Password"
+              onChange={(e) => { setPassword(e.target.value); setError(null); }}
+              onKeyDown={(e) => e.key === "Enter" && !busy && signInWithPassword()}
+              placeholder="Password" className="dz-input" style={{ minHeight: 54 }} />
+            <button type="button" onClick={signInWithPassword} disabled={busy || !password} className="dz-btn dz-btn--primary dz-btn--lg dz-btn--block">
+              {busy && <Loader2 className="animate-spin" />} Sign in
+            </button>
+            <div className="flex items-center justify-between pt-1">
+              <button type="button" className="dz-link" style={{ color: "var(--color-ink3)" }} onClick={() => { setStep("email"); setPassword(""); setError(null); }}>Use another email</button>
+              <button type="button" className="dz-link" disabled={busy} onClick={sendOtp}>Email me a code instead</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <input autoFocus value={otp} inputMode="numeric" maxLength={6} autoComplete="one-time-code" aria-label="6-digit code"
+              onChange={(e) => { setOtp(e.target.value.replace(/\D/g, "")); setError(null); }}
+              onKeyDown={(e) => e.key === "Enter" && !busy && verify()}
+              placeholder="••••••" className="dz-input dz-otp" />
+            <button type="button" onClick={verify} disabled={busy || otp.length !== 6} className="dz-btn dz-btn--primary dz-btn--lg dz-btn--block">
+              {busy && <Loader2 className="animate-spin" />} Sign in
+            </button>
+            <div className="flex items-center justify-between pt-1">
+              <button type="button" className="dz-link" style={{ color: "var(--color-ink3)" }} onClick={() => { setStep("email"); setOtp(""); setError(null); }}>Use another email</button>
+              <button type="button" className="dz-link" disabled={busy || cooldown > 0} onClick={resend}>
+                {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
+              </button>
+            </div>
+          </>
+        )}
+        {error && <p role="alert" className="dz-error">{error}</p>}
       </div>
-    </div>
+    </LoginFrame>
   );
 }
 
-
 /* ================= choose my own password (after a temporary one) ================= */
-function ChoosePasswordPage({ label, onDone }: { label: string; onDone: (token: string, admin: Admin, expiresAt?: string) => void }) {
+function ChoosePasswordPage({ onDone }: { onDone: (token: string, admin: Admin, expiresAt?: string) => void }) {
   const [next, setNext] = useState("");
   const [again, setAgain] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const field = "w-full rounded-xl border border-border bg-ivory px-4 py-3 text-[14px] text-ink outline-none transition-colors placeholder:text-ink3/60 focus:border-primary focus:bg-surface";
-  const primary = "flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-[14px] font-bold text-white transition-colors hover:bg-primary-hover disabled:bg-dis-bg disabled:text-dis";
   const submit = async () => {
     if (next.length < 8) { setError("Use at least 8 characters."); return; }
     if (next !== again) { setError("The two passwords do not match."); return; }
@@ -483,25 +420,21 @@ function ChoosePasswordPage({ label, onDone }: { label: string; onDone: (token: 
     finally { setBusy(false); }
   };
   return (
-    <div className="flex min-h-screen items-center justify-center bg-side px-6 py-12">
-      <div className="w-full max-w-[380px]">
-        <img src={logo} alt="Zennara" className="mx-auto h-20 w-auto object-contain" />
-        <div className="mt-8 rounded-3xl bg-surface p-8 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.45)]">
-          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-ink3">{label}</div>
-          <h1 className="mt-1.5 text-[24px] font-extrabold leading-tight tracking-tight text-ink">Choose your password</h1>
-          <p className="mt-1 text-[13px] text-ink3">You signed in with a temporary password. Pick your own to continue.</p>
-          <div className="mt-6 grid gap-3">
-            <input autoFocus value={next} type="password" autoComplete="new-password" aria-label="New password" placeholder="New password (8+ characters)"
-              onChange={(e) => { setNext(e.target.value); setError(null); }} className={field} />
-            <input value={again} type="password" autoComplete="new-password" aria-label="New password again" placeholder="New password again"
-              onChange={(e) => { setAgain(e.target.value); setError(null); }} onKeyDown={(e) => e.key === "Enter" && !busy && submit()} className={field} />
-            <button onClick={submit} disabled={busy || !next || !again} className={primary}>
-              {busy && <Loader2 className="h-4 w-4 animate-spin" />} Save password
-            </button>
-            {error && <p role="alert" className="text-[12.5px] font-semibold text-err">{error}</p>}
-          </div>
-        </div>
+    <LoginFrame>
+      <div className="text-[13px] font-extrabold uppercase tracking-[0.14em] text-ink3">Dermatologist panel</div>
+      <h2>Choose your password</h2>
+      <p className="mb-6 text-[14.5px] text-ink2">You signed in with a temporary password. Pick your own to continue.</p>
+      <div className="grid gap-3">
+        <input autoFocus value={next} type="password" autoComplete="new-password" aria-label="New password" placeholder="New password (8+ characters)"
+          onChange={(e) => { setNext(e.target.value); setError(null); }} className="dz-input" style={{ minHeight: 54 }} />
+        <input value={again} type="password" autoComplete="new-password" aria-label="New password again" placeholder="New password again"
+          onChange={(e) => { setAgain(e.target.value); setError(null); }} onKeyDown={(e) => e.key === "Enter" && !busy && submit()}
+          className="dz-input" style={{ minHeight: 54 }} />
+        <button type="button" onClick={submit} disabled={busy || !next || !again} className="dz-btn dz-btn--primary dz-btn--lg dz-btn--block">
+          {busy && <Loader2 className="animate-spin" />} Save password
+        </button>
+        {error && <p role="alert" className="dz-error">{error}</p>}
       </div>
-    </div>
+    </LoginFrame>
   );
 }

@@ -28,24 +28,23 @@ const C = (title: string, content: string): Step =>
 /* ---- panel walkthroughs (5–7 steps each) ---- */
 const PANEL_TOURS: Record<string, Step[]> = {
   doctor: [
-    C("Welcome, Dermatologist", "Your panel has exactly what a consult needs — today's guests, their full history, and your own schedule."),
-    T("[data-tour=nav-my-day]", "My day", "Every guest booked with you today, with allergy flags where they matter. Click a row to open the consultation."),
-    T("[data-tour=nav-consultation]", "Consultation", "Pick a guest, then everything happens on one screen — notes, dictation, sketch pad, prescription, treatment assignment."),
-    T("[data-tour=nav-my-patients]", "My patients", "Everyone under your care, most recently seen first, with their next booking if one exists."),
-    T("[data-tour=nav-schedule]", "Your schedule drives everything", "Set your usual week and mark leave on specific dates — the app, reception and booking slots all follow it. My centres, next to it, is where you sit."),
-    T("[data-tour=nav-profile]", "Your app card", "Edit your bio, photo and expertise, preview the card, then publish — guests see it instantly."),
+    C("Welcome, Dermatologist", "Everything a consultation needs — who is waiting, their history, the note, the prescription and the photos — on one tablet screen."),
+    T("[data-tour=nav-my-day]", "Today", "Your guests in the order they arrive. The badge counts who is checked in and waiting. Tap Start when they come in."),
+    T("[data-tour=nav-my-patients]", "Patients", "Everyone under your care. Open a record for past consultations, photos, forms and packages."),
+    T("[data-tour=nav-schedule]", "Schedule", "Your usual week and any leave. The app and the front desk offer exactly these hours."),
+    T("[data-tour=nav-stock]", "Products", "What is on the shelf at your centre, before you prescribe it."),
+    T("[data-tour=nav-profile]", "Your profile", "Your photo, bio and expertise as guests see them in the app."),
   ],
 };
 
 /* ---- feature tours inside complex modules (3–4 steps) ---- */
 const MODULE_TOURS: Record<string, { key: string; steps: Step[] }> = {
   "/dermatologist/consultation": {
-    key: "m-consult",
+    key: "m-consult-v2",
     steps: [
-      T("[data-tour=dictate]", "Dictate, don't type", "Tap the mic on any field — Examination, Assessment or Plan — and speak. Words appear live as you talk."),
-      T("[data-tour=plan-chips]", "Plans in two taps", "The common plans are chips — tap to build the plan without typing. The sketch pad is here too."),
-      T("[data-tour=rx]", "Prescription from your pharmacy", "Type to search the clinic's product list and tap to add, or press Enter for free text. Download unlocks once you sign."),
-      T("[data-tour=assign]", "Assign the treatment", "Search the live treatment catalogue and the Zen packages — what you assign appears on the therapist's tablet."),
+      T("[data-tour=visit-action]", "Start the visit here", "Start consultation when the guest is in the room. If the desk has not checked them in, this checks them in first."),
+      T("[data-tour=steps]", "Four steps", "Notes, Prescription, Photos, then Sign and finish. Move between them in any order."),
+      T("[data-tour=save-state]", "It saves as you go", "Drafts save when you change step and shortly after you stop typing. Nothing is sent to the guest until you sign."),
     ],
   },
 };

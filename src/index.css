@@ -1,56 +1,85 @@
 @import "tailwindcss";
 @import "@fontsource-variable/manrope";
 @import "@fontsource/cormorant-garamond/500.css";
+@import "./styles/derm.css";
 
-@theme {
+/*
+ * One palette for the whole panel. `static` makes Tailwind emit every token as
+ * a CSS variable even when no utility uses it, because styles/derm.css reads
+ * them directly.
+ *
+ * Solid colours only: the translucent values below are scrims and photo
+ * captions laid over imagery, never gradients or shadows.
+ */
+@theme static {
   --color-primary: #032f22;
-  --color-primary-hover: #02271c;
+  --color-primary-hover: #0a3d2d;
+  --color-primary-soft: #d5e3d8;
   --color-secondary: #0b4a37;
-  --color-gold: #e0c391;
-  --color-gold-dark: #cfae73;
 
-  --color-bg: #fdfcfa;
+  --color-gold: #e0c391;
+  --color-gold-hover: #d4b27a;
+  --color-gold-dark: #a47c3c;
+  --color-gold-soft: #f3e8d1;
+  --color-gold-ink: #6f4d12;
+
+  /* green-grey neutrals — the warm beiges are retired */
+  --color-bg: #f3f5f2;
   --color-surface: #ffffff;
-  --color-cream: #f6f0e6;
-  --color-cream-border: #eee6da;
-  --color-ivory: #faf8f4;
-  --color-sage: #eff3ee;
-  --color-border: #e8e3da;
+  --color-sage: #eef3ee;
+  --color-sage-2: #e2eae3;
+  --color-ivory: #f7f9f7;
+  --color-cream: #e9f0ea;
+  --color-cream-border: #d6e1d8;
+  --color-border: #e1e7e1;
+  --color-border-strong: #cad5cb;
+  --color-placeholder: #97a09a;
 
   --color-ink: #111714;
-  --color-ink2: #4f5853;
-  --color-ink3: #7a827e;
+  --color-ink2: #4a534e;
+  --color-ink3: #66706a;
 
-  --color-ok: #267a50;
-  --color-ok-bg: #e5f4eb;
-  --color-warn: #9a5b13;
-  --color-warn-bg: #fff3dd;
+  --color-ok: #1f7a4d;
+  --color-ok-bg: #e2f2e8;
+  --color-warn: #93560e;
+  --color-warn-bg: #fcefd7;
   --color-err: #b42318;
-  --color-err-bg: #fde9e7;
-  --color-info: #27678f;
-  --color-info-bg: #e8f2f8;
-  --color-dis: #8a918d;
-  --color-dis-bg: #f1f1ef;
+  --color-err-bg: #fcebea;
+  --color-err-line: #f0c4bf;
+  --color-err-deep: #8c1b12;
+  --color-info: #245f86;
+  --color-info-bg: #e5eff6;
+  --color-dis: #78807b;
+  --color-dis-bg: #eceeec;
 
-  /* validated categorical chart palette (dataviz six-checks, light surface) */
+  /* validated categorical chart palette */
   --color-c1: #a96a08;
   --color-c2: #2f9e62;
   --color-c3: #6e7be0;
   --color-c4: #b6577a;
 
-  /* sidebar (deep green world) */
+  /* the deep-green sidebar world */
   --color-side: #032f22;
-  --color-side-2: #0b4a37;
-  --color-side-ink: #b7cbc0;
-  --color-side-mut: #6f8f80;
+  --color-side-2: #0d4634;
+  --color-side-3: #145540;
+  --color-side-ink: #c3d4ca;
+  --color-side-mut: #84a092;
 
-  --font-sans: "Manrope Variable", "Manrope", "Inter", -apple-system,
-    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* overlays and photography */
+  --color-scrim: rgba(3, 26, 19, 0.52);
+  --color-photo: #121a16;
+  --color-photo-bar: rgba(6, 18, 13, 0.8);
+  --color-photo-ink: #c4d1c9;
+  --color-viewer: #0a0e0c;
+  --color-viewer-btn: #19221e;
+  --color-viewer-line: #2b3631;
+
+  --font-sans: "Manrope Variable", "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-logo: "Cormorant Garamond", "Iowan Old Style", Palatino, Georgia, serif;
 
   --radius-btn: 12px;
-  --radius-card: 16px;
-  --radius-lg2: 18px;
+  --radius-card: 18px;
+  --radius-lg2: 22px;
 }
 
 html,
@@ -64,83 +93,47 @@ body {
   background: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 14.5px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  text-rendering: optimizeLegibility;
 }
 
 *:focus-visible {
-  outline: 2px solid var(--color-gold-dark);
+  outline: 2px solid var(--color-secondary);
   outline-offset: 2px;
-  border-radius: 4px;
 }
 
 @keyframes chart-line-enter {
   from { stroke-dashoffset: 1; }
   to { stroke-dashoffset: 0; }
 }
-
 @keyframes chart-area-enter {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-
 @keyframes chart-bar-x {
   from { transform: scaleX(0); }
   to { transform: scaleX(1); }
 }
-
 @keyframes chart-bar-y {
   from { transform: scaleY(0); }
   to { transform: scaleY(1); }
 }
-
 .chart-line-enter {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
-  animation: chart-line-enter 700ms cubic-bezier(.22, 1, .36, 1) forwards;
+  animation: chart-line-enter 700ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
+.chart-area-enter { animation: chart-area-enter 550ms ease-out both; }
+.chart-bar-x { transform-origin: left center; animation: chart-bar-x 520ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.chart-bar-y { transform-box: fill-box; transform-origin: center bottom; animation: chart-bar-y 520ms cubic-bezier(0.22, 1, 0.36, 1) both; }
 
-.chart-area-enter {
-  transform-origin: center bottom;
-  animation: chart-area-enter 550ms ease-out both;
-}
-
-.chart-bar-x {
-  transform-origin: left center;
-  animation: chart-bar-x 520ms cubic-bezier(.22, 1, .36, 1) both;
-}
-
-.chart-bar-y {
-  transform-box: fill-box;
-  transform-origin: center bottom;
-  animation: chart-bar-y 520ms cubic-bezier(.22, 1, .36, 1) both;
-}
-
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-thumb {
-  background: #d8d3c8;
-  border-radius: 6px;
-  border: 2px solid var(--color-bg);
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #cfd8d0; border: 2px solid var(--color-bg); border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
-    animation: none !important;
-    transition: none !important;
-  }
-}
-
-/* Print: the page body only — no sidebar, header, search or buttons. */
-@media print {
-  aside, header, nav, button, input, select, textarea, [data-tour="bell"], .no-print { display: none !important; }
-  main { padding: 0 !important; background: white !important; }
-  body { background: white !important; }
-  table { font-size: 11px; }
+  * { animation: none !important; transition: none !important; }
 }

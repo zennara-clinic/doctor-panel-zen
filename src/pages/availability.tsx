@@ -26,8 +26,8 @@ import { clinicMonthEnd, clinicMonthStart, dayKeyDate, fmtDayKey, isoDay } from 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAY_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
 
-const SEL = "w-full rounded-lg border border-border bg-ivory px-2.5 py-2 text-[13px] outline-none focus:border-gold-dark disabled:text-ink3";
-const SEL_SM = "rounded-lg border border-border bg-ivory px-2 py-1 text-[11px] outline-none focus:border-gold-dark";
+const SEL = "dz-select";
+const SEL_SM = "dz-select";
 
 /** "2026-08-14" for a calendar Date, independent of browser timezone. */
 function key(d: Date) {
@@ -56,7 +56,7 @@ function Ranges({
   const set = (i: number, patch: Partial<TimeRange>) =>
     onChange(ranges.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
-  const input = "rounded-lg border px-2 py-1.5 text-[12.5px] outline-none focus:border-gold-dark disabled:bg-ivory disabled:text-ink3";
+  const input = "dz-input !w-auto";
 
   return (
     <div className="space-y-2">
@@ -69,7 +69,7 @@ function Ranges({
             <input type="time" value={r.start} disabled={disabled}
               onChange={(e) => set(i, { start: e.target.value })}
               className={`${input} border-border bg-surface`} />
-            <span className="text-ink3">–</span>
+            <span className="text-ink3">to</span>
             <input type="time" value={r.end} disabled={disabled}
               onChange={(e) => set(i, { end: e.target.value })}
               className={`${input} ${invalid ? "border-err bg-err-bg" : "border-border bg-surface"}`} />
@@ -86,7 +86,7 @@ function Ranges({
 
       {!disabled && (
         <button onClick={() => onChange([...ranges, { start: "10:00", end: "13:00" }])}
-          className="text-[11.5px] font-bold text-primary hover:underline">
+          className="dz-link">
           + Add hours
         </button>
       )}
@@ -267,7 +267,8 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
           <Empty title="No schedule to show" hint={loaded.error ?? "This dermatologist could not be loaded."} />
         ) : (
           <Page
-            title={forced ? (loaded.data?.dermatologist.name ?? "Working hours") : "My schedule"}
+            eyebrow={myCentres.length ? `You practise at ${myCentres.join(", ")}` : "No centre assigned yet"}
+            title={forced ? (loaded.data?.dermatologist.name ?? "Working hours") : "Schedule"}
             sub={zenotiPrimary ? "Managed in Zenoti — read live here" : "Your usual week plus date-specific changes"}
             actions={canEdit ? (
               <>
@@ -323,8 +324,8 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                   right={canEdit ? (
                     <button onClick={resetToCentreHours} disabled={resetting}
                       title="Replace the week below with your centres' opening days and hours — saved only when you publish"
-                      className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[11px] font-semibold text-ink2 hover:border-gold-dark hover:text-ink disabled:opacity-50">
-                      {resetting ? "Loading…" : "↺ Reset to centre hours"}
+                      className="dz-btn dz-btn--secondary dz-btn--sm">
+                      {resetting ? "Loading…" : "Reset to centre hours"}
                     </button>
                   ) : undefined} />
                 <div>
@@ -335,11 +336,9 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                       <div key={day} className="flex flex-col gap-2 border-b border-border py-3 last:border-0 last:pb-0 sm:flex-row sm:items-start sm:gap-5">
                         <button type="button" disabled={!canEdit}
                           onClick={() => setWeek(day, on ? [] : [{ start: "10:00", end: "13:00" }])}
-                          className="flex w-40 shrink-0 items-center gap-2.5 text-left disabled:cursor-default">
-                          <span className={`relative h-[20px] w-[34px] shrink-0 rounded-full transition-colors ${on ? "bg-primary" : "bg-border"}`}>
-                            <span className={`absolute top-[2px] h-4 w-4 rounded-full bg-white shadow transition-all ${on ? "left-[16px]" : "left-[2px]"}`} />
-                          </span>
-                          <span className={`text-[13px] ${on ? "font-bold text-ink" : "font-medium text-ink3"}`}>{name}</span>
+                          className="flex min-h-11 w-44 shrink-0 items-center gap-3 text-left disabled:cursor-default">
+<span className={`dz-toggle ${on ? "is-on" : ""}`} aria-hidden="true" />
+                          <span className={`text-[15px] ${on ? "font-extrabold text-ink" : "font-semibold text-ink3"}`}>{name}</span>
                         </button>
 
                         {on ? (
@@ -408,13 +407,13 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                       <div className="flex items-center gap-1">
                         <button onClick={() => setMonth(new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() - 1, 1, 12)))}
                           aria-label="Previous month"
-                          className="grid h-7 w-7 place-items-center rounded-lg text-ink3 hover:bg-ivory hover:text-ink">‹</button>
+                          className="dz-iconbtn" style={{ width: 40, height: 40 }}>‹</button>
                         <span className="w-32 text-center text-[12px] font-bold">
                           {fmtDayKey(key(month), { month: "long", year: "numeric" })}
                         </span>
                         <button onClick={() => setMonth(new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() + 1, 1, 12)))}
                           aria-label="Next month"
-                          className="grid h-7 w-7 place-items-center rounded-lg text-ink3 hover:bg-ivory hover:text-ink">›</button>
+                          className="dz-iconbtn" style={{ width: 40, height: 40 }}>›</button>
                       </div>
                     } />
 
@@ -434,8 +433,8 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                       return (
                         <button key={k} onClick={() => setOpenDate(openDate === k ? null : k)}
                           className={[
-                            "relative rounded-lg border py-1.5 text-[12.5px] transition-colors",
-                            openDate === k ? "border-gold-dark bg-cream font-bold" : "border-transparent hover:border-border",
+                            "relative min-h-12 rounded-xl border py-1.5 text-[14px] transition-colors",
+                            openDate === k ? "border-primary bg-sage font-extrabold" : "border-transparent hover:border-border",
                             isOff ? "text-err line-through" : free > 0 ? "text-ink" : "text-ink3",
                           ].join(" ")}>
                           {fromKey(k).getUTCDate()}
@@ -452,13 +451,13 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
 
                   {/* ------------------------ one open date ------------------- */}
                   {openDate && (
-                    <div className="mt-4 rounded-xl border border-border bg-ivory p-3.5">
+                    <div className="mt-4 rounded-2xl border border-border bg-sage p-4">
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <div className="text-[13px] font-extrabold">{prettyDate(openDate)}</div>
                         {canEdit && (
                           <div className="flex flex-wrap gap-1.5">
                             <button onClick={() => setOverride(openDate, { date: openDate, unavailable: true, note: "" })}
-                              className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[11px] font-semibold hover:border-err hover:text-err">
+                              className="dz-btn dz-btn--secondary dz-btn--sm">
                               Mark unavailable
                             </button>
                             <button
@@ -471,12 +470,12 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                                     : [{ start: "10:00", end: "13:00" }],
                                 })
                               }
-                              className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[11px] font-semibold hover:border-gold-dark">
+                              className="dz-btn dz-btn--secondary dz-btn--sm">
                               Different hours
                             </button>
                             {overrideFor(openDate) && (
                               <button onClick={() => setOverride(openDate, null)}
-                                className="rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-ink3 hover:bg-surface">
+                                className="dz-btn dz-btn--ghost dz-btn--sm">
                                 Back to usual
                               </button>
                             )}
@@ -495,7 +494,7 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                           <input type="text" value={overrideFor(openDate)?.note ?? ""} disabled={!canEdit} maxLength={200}
                             placeholder="Reason (leave, conference, half day…) — staff only"
                             onChange={(e) => setOverride(openDate, { ...overrideFor(openDate)!, note: e.target.value })}
-                            className="rounded-lg border border-border bg-surface px-3 py-1.5 text-[12.5px] outline-none focus:border-gold-dark" />
+                            className="dz-input" />
                           {!overrideFor(openDate)?.unavailable && centreBranches.length > 1 && (
                             <select value={overrideFor(openDate)?.branchId ?? ""} disabled={!canEdit}
                               onChange={(e) => setOverride(openDate, { ...overrideFor(openDate)!, branchId: e.target.value || null })}

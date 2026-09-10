@@ -133,10 +133,10 @@ export function LifecycleActions({ state, busy, onRun, extraFor, canOverride = t
 /** A minimal dialog so this file doesn't depend on each page's modal state. */
 function Modalish({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 text-[15px] font-bold">{title}</div>
-        {children}
+    <div className="dz-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="dz-modal" role="dialog" aria-modal="true">
+        <div className="dz-dialog__head"><h3 className="dz-dialog__title">{title}</h3></div>
+        <div className="dz-dialog__body">{children}</div>
       </div>
     </div>
   );
