@@ -5,6 +5,8 @@ import { ActiveFilters, Area, AreaChart, Async, B, Btn, Card, ChartCard, Chips, 
 import { LifecycleActions, LIFECYCLE_TOAST, StatusHistory, useLifecycle } from "../lifecycle";
 import { useStore } from "../store";
 import api from "../lib/api";
+import { PreConsultModal } from "../preconsult";
+import GuestPurchases from "../purchases";
 import { ZenotiMembershipCard, ZenotiPackageCard, appointmentState, fmtZDate, fmtZWhen, membershipActive, money, pkgActive } from "./zenoti";
 import { getSocket, type ChatUpdate, type DeletedEvent, type PresenceEvent, type TypingEvent } from "../lib/socket";
 import { useApi, useBookingUpdates, useDebounced, useMutation, usePoll } from "../lib/useApi";
@@ -15,7 +17,7 @@ import { CLINIC_TZ,
   statusKey, mapToRows, isConsultationBooking, clinicHM, addClinicDays, clinicMonthEnd,
   clinicMonthStart, clinicWeekday, dayKeyDate, fmtDayKey,
 } from "../lib/format";
-import type { ConsultationStage, Booking, Branch, Chat as ChatThread, ChatMessage, Consultation, Doctor, ProductOrder, User } from "../lib/types";
+import type { ConsultationStage, Booking, Branch, Chat as ChatThread, ChatMessage, Consultation, Doctor, PreConsultForm, ProductOrder, User } from "../lib/types";
 
 /* ================= OVERVIEW ================= */
 const RANGE_PRESETS: [string, () => { startDate: string; endDate: string }][] = [
@@ -1615,6 +1617,8 @@ export function PatientDetail() {
   const [selBooking, setSelBooking] = useState<string | null>(null);
   const [grantOpen, setGrantOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
+  /** The pre-consult the doctor clicked open in the record table. */
+  const [openForm, setOpenForm] = useState<PreConsultForm | null>(null);
   const [sp, setSp] = useSearchParams();
   // Opened from the list (router state) or from a notification / link (?id=).
   const routeState = loc.state as { id?: string; returnTo?: string } | null;
@@ -1637,7 +1641,13 @@ export function PatientDetail() {
       // Every list is scoped server-side to this guest; the client filter is a belt-and-braces guard.
       api.bookings.list({ userId: id }).then((r) => (r.data ?? []).filter((b) => idOf(b.userId) === id)),
       api.packageAssignments.list({ userId: id, limit: 100 }).then((r) => (r.data ?? []).filter((a) => idOf(a.userId) === id)).catch(() => []),
-      // Retail purchases are the clinic's business, not the consult room's.
+      /*
+       * Was a hardcoded empty array — "retail purchases are the clinic's
+       * business, not the consult room's". They are clinical history: whether
+       * the guest ever picked up the course decides what you do next. Fetched
+       * and rendered by <GuestPurchases>, which shows items and dates and
+       * never prices.
+       */
       Promise.resolve([] as ProductOrder[]),
       api.preConsult.list({ userId: id, limit: 100 }).then((r) => (r.data ?? []).filter((f) => idOf(f.userId) === id)).catch(() => []),
       api.consentForms.list({ userId: id, limit: 100 }).then((r) => (r.data ?? []).filter((c) => idOf(c.userId) === id)).catch(() => []),
@@ -1712,10 +1722,15 @@ export function PatientDetail() {
           /* clinical records */
           recordCount === 0
             ? <Empty key="r" title="No clinical records" hint="Pre-consult forms, consultation notes and service cards appear here as they are written." />
-            : <DataTable key="r" cols={["Date", "Record", "Dermatologist", "Status"]} rows={[
+            : <DataTable key="r" cols={["Date", "Record", "Dermatologist", "Status"]}
+                /* A pre-consult is the first n rows, so a click on one of them
+                   opens it. The rest of this table is already-summarised text
+                   with nothing more to show. */
+                onRow={(i) => { if (i < forms.length) setOpenForm(forms[i]); }}
+                rows={[
                 ...forms.map((f) => [
                   fmtDate(f.dateOfVisit || f.createdAt),
-                  "Pre-consult form",
+                  <span key={`pcf${f._id}`} className="font-semibold text-primary underline decoration-primary/30 underline-offset-2">Pre-consult form</span>,
                   f.doctorName ?? "—",
                   <Tag key={f._id} kind={f.status === "Approved" || f.status === "Reviewed" ? "ok" : f.status === "Rejected" ? "err" : "warn"}>{f.status}</Tag>,
                 ]),
@@ -1866,6 +1881,7 @@ export function PatientDetail() {
                 {tabBody[tab] ?? tabBody[0]}
               </div>
               <div className="grid gap-3">
+                <GuestPurchases userId={id} patient={p} />
                 {zLinked && zd && (
                   <Card className="p-4"><SecH t="Zennara clinic history" right={<Tag kind="info">Clinic</Tag>} />
                     <div className="grid grid-cols-2 gap-2 text-[12px]">
@@ -1956,6 +1972,7 @@ export function PatientDetail() {
             <NewBookingModal open={bookOpen} onClose={() => setBookOpen(false)} onBooked={q.reload} presetUser={p} />
             <EditPatientModal open={editOpen} onClose={() => setEditOpen(false)} user={p} onSaved={q.reload} />
             <BookingDrawer id={selBooking} onClose={() => setSelBooking(null)} onChanged={q.reload} />
+            <PreConsultModal form={openForm} open={!!openForm} onClose={() => setOpenForm(null)} />
           </Page>
         );
       }}

@@ -1,4 +1,4 @@
-import { Check, Pencil } from "lucide-react";
+import { Check, Columns2, Pencil } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -9,6 +9,13 @@ import { LifecycleActions, LIFECYCLE_TOAST, StatusHistory, useLifecycle } from "
 import { useStore } from "../store";
 import { useDictation } from "../dictate";
 import api from "../lib/api";
+import { PreConsultModal, chosenLabels } from "../preconsult";
+import RxBuilder from "../rx";
+import GuestPurchases from "../purchases";
+import PhotoCompare from "../photocompare";
+import StockPill from "../stock-pill";
+// Re-exported: it used to live here, and the tour and page both name it.
+export { default as StockPill } from "../stock-pill";
 import { useApi, useDebounced } from "../lib/useApi";
 import { useMyDoctor } from "../lib/useMe";
 import {
@@ -206,6 +213,9 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
   audit: ReturnType<typeof useStore>["audit"]; toast: (m: string) => void;
 }) {
   const nav = useNavigate();
+  // Scopes the stock search in the prescription builder to the centre the
+  // dermatologist is sitting in — "in stock" has to mean in stock here.
+  const { branchId } = useStore();
   const [sketchOpen, setSketchOpen] = useState(false);
   const [complaint, setComplaint] = useState("");
   const [examination, setExamination] = useState("");
@@ -226,13 +236,13 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [rxQ, setRxQ] = useState("");
-  const rxSearch = useDebounced(rxQ, 300);
   const [svcQ, setSvcQ] = useState("");
   const svcSearch = useDebounced(svcQ, 300);
   // Visit actions — OTP modals and the no-show/complete buttons.
   const [manualReason, setManualReason] = useState("");
   const [code, setCode] = useState("");
+  /** The full pre-consult, opened from the summary card. */
+  const [formOpen, setFormOpen] = useState(false);
   const [visitBusy, setVisitBusy] = useState(false);
   const [visitErr, setVisitErr] = useState<string | null>(null);
 
@@ -260,10 +270,27 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
     ]);
     return { bookings: b, notes: n };
   }, [userId, bookingId]);
-  const form = useApi(
-    () => api.preConsult.list({ bookingId, limit: 1 }).then((r) => (r.data ?? [])[0] ?? null).catch(() => null),
-    [bookingId],
-  );
+  /*
+   * The intake for this visit — and, failing that, the guest's most recent one.
+   *
+   * A form is only tied to a bookingId when the guest filled it from inside
+   * this appointment in the app. Anyone who checked in on the front-desk
+   * tablet, or filled the form before the desk had booked them, has one with
+   * no booking attached — and this card used to tell the dermatologist "the
+   * guest has not filled one in", with the answers sitting unread in the
+   * database. It now falls back to the newest form on the guest's record and
+   * says plainly which of the two it is showing.
+   */
+  const form = useApi(async () => {
+    if (!bookingId) return null;
+    const forThisVisit = await api.preConsult.list({ bookingId, limit: 1 })
+      .then((r) => (r.data ?? [])[0] ?? null).catch(() => null);
+    if (forThisVisit) return { doc: forThisVisit, linked: true };
+    if (!userId) return null;
+    const latest = await api.preConsult.list({ userId, limit: 5 })
+      .then((r) => (r.data ?? []).filter((f) => f.status !== "Draft")[0] ?? null).catch(() => null);
+    return latest ? { doc: latest, linked: false } : null;
+  }, [bookingId, userId]);
   // The guest's most recent Universal Patient Consent — what the doctor counter-signs.
   const consent = useApi(
     () => (userId ? api.consentForms.list({ userId, limit: 1 }).then((r) => (r.data ?? [])[0] ?? null).catch(() => null) : Promise.resolve(null)),
@@ -277,24 +304,6 @@ function ConsultScreen({ bookingId, onBack, doctorName, me, audit, toast }: {
    */
   // Guest's live packages, so the dermatologist sees what is already paid for before assigning more.
   const guestPkgs = useApi(() => (userId ? api.packageAssignments.list({ userId, status: "Active", limit: 20 }).then((r) => r.data ?? []).catch(() => []) : Promise.resolve([])), [userId]);
-  /** Add a medicine and flag Schedule H automatically when the clinic's product master marks it Rx. */
-  const addRx = (name: string) => {
-    const medicine = name.trim(); if (!medicine) return;
-    setRx((r) => [...r, { medicine, isScheduleH: false }]); setRxQ(""); setDirty(true);
-    api.productAvailability.list({ search: medicine, limit: 5 }).then((res) => {
-      const rows = res.data ?? [];
-      const hit = rows.find((p) => p.name.toLowerCase() === medicine.toLowerCase()) ?? rows.find((p) => p.name.toLowerCase().startsWith(medicine.toLowerCase()));
-      if (hit?.isRx) setRx((r) => r.map((x) => (x.medicine === medicine ? { ...x, isScheduleH: true } : x)));
-    }).catch(() => undefined);
-  };
-  const rxSuggest = useApi(
-    () => (rxSearch.trim().length >= 2
-      ? api.productAvailability.list({ search: rxSearch.trim(), limit: 6 })
-          .then((r) => (r.data ?? []).slice(0, 6)).catch(() => [])
-      : Promise.resolve([])),
-    [rxSearch],
-  );
-
   const visit = async (fn: () => Promise<unknown>, msg: string) => {
     setVisitBusy(true); setVisitErr(null);
     try { await fn(); toast(msg); booking.reload(); void life.reload(); return true; }
@@ -525,66 +534,66 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
           </Card>
 
           <Card className="p-4">
-            <SecH t="Pre-consult form" />
+            <SecH
+              t="Pre-consult form"
+              right={form.data ? (
+                <button className="text-[11.5px] font-semibold text-primary" onClick={() => setFormOpen(true)}>Open full form</button>
+              ) : undefined}
+            />
             {form.initial ? <Loading rows={1} label="" /> : !form.data ? (
-              <div className="text-[11.5px] text-ink3">The guest has not filled one in for this visit.</div>
+              <div className="text-[11.5px] text-ink3">No pre-consult form on this guest&rsquo;s record yet.</div>
             ) : (
               <div className="text-[11.5px] leading-relaxed text-ink2">
-                <Tag kind={form.data.status === "Submitted" || form.data.status === "Approved" ? "ok" : "warn"}>{form.data.status}</Tag>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Tag kind={form.data.doc.status === "Submitted" || form.data.doc.status === "Approved" || form.data.doc.status === "Reviewed" ? "ok" : "warn"}>{form.data.doc.status}</Tag>
+                  {/* Say which form this is. A form the guest filled at the
+                      front desk is still their intake — but it was not filled
+                      for today, and the dermatologist should know that before
+                      relying on "current medication". */}
+                  {!form.data.linked && <Tag kind="info">From {fmtDate(form.data.doc.dateOfVisit || form.data.doc.createdAt)}, not this visit</Tag>}
+                </div>
                 <div className="mt-1.5">
-                  {Object.entries(form.data.reasonForVisit ?? {}).filter(([, v]) => v).length > 0 && (
-                    <><B>Here for</B> {Object.entries(form.data.reasonForVisit ?? {}).filter(([, v]) => v).map(([k]) => k).join(", ")}<br /></>
+                  {chosenLabels(form.data.doc.reasonForVisit).length > 0 && (
+                    <><B>Here for</B> {chosenLabels(form.data.doc.reasonForVisit).join(", ")}<br /></>
                   )}
-                  {Object.entries(form.data.skinConcerns ?? {}).filter(([, v]) => v).length > 0 && (
-                    <><B>Skin</B> {Object.entries(form.data.skinConcerns ?? {}).filter(([, v]) => v).map(([k]) => k).join(", ")}<br /></>
+                  {chosenLabels(form.data.doc.skinConcerns).length > 0 && (
+                    <><B>Skin</B> {chosenLabels(form.data.doc.skinConcerns).join(", ")}<br /></>
                   )}
-                  {Object.entries(form.data.hairConcerns ?? {}).filter(([, v]) => v).length > 0 && (
-                    <><B>Hair</B> {Object.entries(form.data.hairConcerns ?? {}).filter(([, v]) => v).map(([k]) => k).join(", ")}<br /></>
+                  {chosenLabels(form.data.doc.hairConcerns as Record<string, unknown>).length > 0 && (
+                    <><B>Hair</B> {chosenLabels(form.data.doc.hairConcerns as Record<string, unknown>).join(", ")}<br /></>
                   )}
-                  {form.data.drugAllergies && (
-                    <><b className="font-semibold text-err">Allergies</b> {form.data.drugAllergies}<br /></>
+                  {form.data.doc.drugAllergies && !/^none/i.test(form.data.doc.drugAllergies) && (
+                    <><b className="font-semibold text-err">Allergies</b> {form.data.doc.drugAllergies}<br /></>
                   )}
-                  {form.data.otherAllergies && <><b className="font-semibold text-err">Other allergies</b> {form.data.otherAllergies}<br /></>}
-                  {Object.entries(form.data.medicalHistory ?? {}).filter(([, v]) => v).length > 0 && (
-                    <><B>Medical history</B> {Object.entries(form.data.medicalHistory ?? {}).filter(([, v]) => v).map(([k, v]) => (typeof v === "string" ? `${k}: ${v}` : k)).join(", ")}<br /></>
+                  {form.data.doc.otherAllergies && <><b className="font-semibold text-err">Other allergies</b> {form.data.doc.otherAllergies}<br /></>}
+                  {form.data.doc.symptomDuration && <><B>Duration</B> {form.data.doc.symptomDuration}<br /></>}
+                  {form.data.doc.currentMedications && (
+                    <><b className="font-semibold text-err">Current medication</b> {form.data.doc.currentMedications}<br /></>
                   )}
-                    {form.data.symptomDuration && <><B>Duration</B> {form.data.symptomDuration}<br /></>}
-                  {form.data.previousTreatments && <><B>Previous treatment</B> {form.data.previousTreatments}<br /></>}
-                  {form.data.currentMedications && (
-                    <><b className="font-semibold text-err">Current medication</b> {form.data.currentMedications}<br /></>
-                  )}
-                  {form.data.pregnancyStatus && !["not_applicable", "prefer_not_to_say"].includes(form.data.pregnancyStatus) && (
+                  {form.data.doc.pregnancyStatus && !["not_applicable", "prefer_not_to_say"].includes(form.data.doc.pregnancyStatus) && (
                     /* Load-bearing: most lasers, peels and several drugs are
                        contraindicated in pregnancy, so it reads as a warning. */
-                    <><b className="font-semibold text-err">Pregnancy</b> {form.data.pregnancyStatus.replace(/_/g, " ")}<br /></>
+                    <><b className="font-semibold text-err">Pregnancy</b> {form.data.doc.pregnancyStatus.replace(/_/g, " ")}<br /></>
                   )}
-                  {form.data.patientNotes && <><B>Patient notes</B> {form.data.patientNotes}<br /></>}
-                  {(form.data.photos ?? []).length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {(form.data.photos ?? []).map((ph, i) => (
-                        <a key={i} href={ph.url} target="_blank" rel="noreferrer">
-                          <img src={ph.url} alt={ph.caption || "Patient photo"} className="h-16 w-16 rounded-lg border border-border object-cover" />
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                {form.data.planningForPregnancy && <><B>Planning pregnancy</B> yes<br /></>}
-                  {form.data.lastMenstrualPeriod && <><B>LMP</B> {fmtDate(form.data.lastMenstrualPeriod)}<br /></>}
-                  {form.data.diet?.type && <><B>Diet</B> {String(form.data.diet.type)}<br /></>}
-                  {form.data.dailyRoutine && Object.values(form.data.dailyRoutine).some(Boolean) && (
-                    <><B>Routine</B> {Object.entries(form.data.dailyRoutine).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(", ")}<br /></>
-                  )}
-                  {form.data.additionalInfo && Object.values(form.data.additionalInfo).some(Boolean) && (
-                    <><B>Also</B> {Object.entries(form.data.additionalInfo).filter(([, v]) => v).map(([k, v]) => `${k}: ${String(v)}`).join(", ")}<br /></>
-                  )}
+                  {form.data.doc.patientNotes && <><B>Patient notes</B> {form.data.doc.patientNotes}<br /></>}
                 </div>
-                {form.data.status === "Submitted" && (
+                {(form.data.doc.photos ?? []).length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {(form.data.doc.photos ?? []).map((ph, i) => (
+                      <a key={i} href={ph.url} target="_blank" rel="noreferrer">
+                        <img src={ph.url} alt={ph.caption || "Patient photo"} className="h-16 w-16 rounded-lg border border-border object-cover" />
+                      </a>
+                    ))}
+                  </div>
+                )}
+                {form.data.doc.status === "Submitted" && (
                   <Btn kind="ghost" className="mt-2 w-full !py-1.5 !text-[11.5px]" disabled={visitBusy} onClick={() => visit(
-                    () => api.preConsult.setStatus(form.data!._id, "Reviewed")
-                      .then(() => audit("FORM_STATUS_CHANGED", `${bk.fullName} pre-consult reviewed`, { formId: form.data!._id }))
+                    () => api.preConsult.setStatus(form.data!.doc._id, "Reviewed")
+                      .then(() => audit("FORM_STATUS_CHANGED", `${bk.fullName} pre-consult reviewed`, { formId: form.data!.doc._id }))
                       .then(() => form.reload()),
                     "Pre-consult form marked reviewed")}>Mark reviewed</Btn>
                 )}
+                <PreConsultModal form={form.data.doc} open={formOpen} onClose={() => setFormOpen(false)} />
               </div>
             )}
           </Card>
@@ -611,6 +620,11 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
               )}
             </Async>
           </Card>
+
+          {/* What the guest actually went on to buy. The prescription says what
+              was advised; this says whether they picked it up — the question a
+              review consultation turns on. */}
+          <GuestPurchases userId={userId} patient={patient.data} compact />
         </div>
 
         {/* ---- diagnosis, clinical note ---- */}
@@ -733,99 +747,43 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
             )}
           </Card>
 
-          <Card data-tour="rx" className="p-4">
-            <SecH t="Prescription" right={
-              <span className="flex items-center gap-1.5">
-                {completed && note.data?._id && (
-                  <Btn kind="ghost" className="!py-1 !text-[11.5px]" disabled={sendingRx}
-                    onClick={async () => {
-                      setSendingRx(true);
-                      try {
-                        const r = await api.consultationNotes.send(note.data!._id);
-                        toast((r.message as string) ?? "Prescription emailed");
-                        note.reload();
-                      } catch (e) { toast((e as Error).message); } finally { setSendingRx(false); }
-                    }}>
-                    {sendingRx ? "Sending…" : note.data?.prescriptionEmailedAt ? "Resend email" : "Email to guest"}
-                  </Btn>
-                )}
-                <Btn kind="ghost" className="!py-1 !text-[11.5px]" disabled={!completed} onClick={() => printRx()}>Print / PDF</Btn>
-                <Btn kind={completed ? "gold" : "ghost"} className="!py-1 !text-[11.5px]" disabled={!completed} onClick={downloadRx}>
-                  {completed ? "Download" : "Sign to unlock"}
+          <div data-tour="rx">
+            {/* The head keeps what the old flat list carried — email, print,
+                download and who it signs as. The builder underneath is the
+                part that changed: shelves and chips instead of seven text
+                boxes per medicine. */}
+            <div className="mb-1.5 flex flex-wrap items-center justify-end gap-1.5">
+              {completed && note.data?._id && (
+                <Btn kind="ghost" className="!py-1 !text-[11.5px]" disabled={sendingRx}
+                  onClick={async () => {
+                    setSendingRx(true);
+                    try {
+                      const r = await api.consultationNotes.send(note.data!._id);
+                      toast((r.message as string) ?? "Prescription emailed");
+                      note.reload();
+                    } catch (e) { toast((e as Error).message); } finally { setSendingRx(false); }
+                  }}>
+                  {sendingRx ? "Sending…" : note.data?.prescriptionEmailedAt ? "Resend email" : "Email to guest"}
                 </Btn>
-              </span>} />
+              )}
+              <Btn kind="ghost" className="!py-1 !text-[11.5px]" disabled={!completed} onClick={() => printRx()}>Print / PDF</Btn>
+              <Btn kind={completed ? "gold" : "ghost"} className="!py-1 !text-[11.5px]" disabled={!completed} onClick={downloadRx}>
+                {completed ? "Download" : "Sign to unlock"}
+              </Btn>
+            </div>
             {completed && note.data?.prescriptionEmailedAt && (
               <div className="mb-2 flex items-center gap-1.5 text-[11px] text-ok">
                 <Check size={12} /> Emailed to {note.data.prescriptionEmailedTo ?? "the guest"} {fmtAgo(note.data.prescriptionEmailedAt)}
               </div>
             )}
-            <div className="mb-2 flex gap-2">
-              <input value={rxQ} onChange={(e) => setRxQ(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && rxQ.trim()) addRx(rxQ); }}
-                placeholder="Type a medicine and press Enter"
-                className="min-w-0 flex-1 rounded-lg border border-border bg-ivory px-2.5 py-2 text-[12.5px] outline-none focus:border-gold-dark" />
-              <Btn kind="ghost" className="!px-2.5 !py-1.5 !text-[11.5px]" disabled={!rxQ.trim()}
-                onClick={() => addRx(rxQ)}>Add</Btn>
-            </div>
-
-            {(rxSuggest.data ?? []).length > 0 && (
-              <div className="mb-2 rounded-lg border border-border bg-surface">
-                {(rxSuggest.data ?? []).map((pr) => (
-                  <button key={pr._id} onClick={() => {
-                    // A Zennara product carries its id and the stock at the
-                    // moment of prescribing (quantity only — never a price).
-                    setRx((r) => [...r, {
-                      medicine: pr.name, isScheduleH: pr.isRx === true,
-                      formulation: pr.formulation ?? null,
-                      productId: pr.source === "product" ? pr._id : null,
-                      availableQuantity: pr.quantity,
-                    }]);
-                    setRxQ(""); setDirty(true);
-                  }}
-                    className="flex w-full items-center justify-between gap-2 border-b border-border px-2.5 py-1.5 text-left text-[12px] last:border-0 hover:bg-ivory">
-                    <span className="min-w-0 truncate">{pr.name}</span>
-                    <span className="shrink-0 text-[10.5px] text-ink3">
-                      {[pr.formulation, pr.sku].filter(Boolean).join(" · ")}
-                      {pr.formulation || pr.sku ? " · " : ""}
-                      <StockPill status={pr.status} qty={pr.quantity} />
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-            {rx.length === 0 && <div className="text-[11.5px] text-ink3">No medicines added. Type to search the pharmacy list, or press Enter to add free text.</div>}
-            {rx.map((m, i) => (
-              <div key={i} className="mb-1.5 rounded-lg border border-border bg-surface px-2.5 py-2">
-                <div className="flex items-start justify-between gap-2">
-                  <span className="min-w-0 flex-1 text-[12px] font-semibold">{m.medicine}</span>
-                  <button onClick={() => { setRx((r) => r.filter((_, j) => j !== i)); setDirty(true); }}
-                    className="shrink-0 font-bold text-err">×</button>
-                </div>
-                <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-                  {([
-                    ["strength", "Strength"], ["formulation", "Form"],
-                    ["dosage", "Dose"], ["frequency", "Frequency"],
-                    ["duration", "Duration"], ["timing", "Timing"],
-                    ["refillAfterDays", "Refill after (days)"],
-                  ] as [keyof PrescriptionItem, string][]).map(([k, label]) => (
-                    <input key={String(k)} value={(m[k] as string) ?? ""} placeholder={label}
-                      onChange={(e) => { setRx((r) => r.map((x, j) => (j === i ? { ...x, [k]: e.target.value } : x))); setDirty(true); }}
-                      className="rounded border border-border bg-ivory px-2 py-1 text-[11px] outline-none focus:border-gold-dark" />
-                  ))}
-                  <label className="flex items-center gap-1.5 text-[11px] text-ink3">
-                    <Toggle on={!!m.isScheduleH}
-                      onChange={(v) => { setRx((r) => r.map((x, j) => (j === i ? { ...x, isScheduleH: v } : x))); setDirty(true); }} />
-                    Sch H
-                  </label>
-                </div>
-                <input value={m.instructions ?? ""} placeholder="Instructions to the guest"
-                  onChange={(e) => { setRx((r) => r.map((x, j) => (j === i ? { ...x, instructions: e.target.value } : x))); setDirty(true); }}
-                  className="mt-1.5 w-full rounded border border-border bg-ivory px-2 py-1 text-[11px] outline-none focus:border-gold-dark" />
-                {m.isScheduleH && <div className="mt-1"><Tag kind="warn">Schedule H — signed slip required</Tag></div>}
-              </div>
-            ))}
-            <div className="mt-2 border-t border-border pt-2 text-[11px] text-ink3">Signs as <B>{doctorName}</B></div>
-          </Card>
+            <RxBuilder
+              rx={rx}
+              setRx={(next) => { setRx(next); setDirty(true); }}
+              locked={completed}
+              branchId={branchId}
+            />
+            <div className="mt-1.5 px-1 text-[11px] text-ink3">Signs as <B>{doctorName}</B></div>
+          </div>
 
           <Card className="p-4">
             <SecH t="Advice" em="· printed under the prescription" />
@@ -1545,6 +1503,8 @@ function PatientPhotos({ userId, bookingId }: { userId: string; bookingId?: stri
   const [err, setErr] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  /** Before-and-after, the only question anyone asks of a photo record. */
+  const [compareOpen, setCompareOpen] = useState(false);
   const { toast } = useStore();
 
   const photos = useApi(
@@ -1578,7 +1538,12 @@ function PatientPhotos({ userId, bookingId }: { userId: string; bookingId?: stri
 
   return (
     <Card data-tour="photos" className="p-4">
-      <SecH t="Photographs" em="· before, during and after, newest first" />
+      <SecH t="Photographs" em="· before, during and after, newest first"
+        right={(photos.data ?? []).length >= 2 ? (
+          <Btn kind="ghost" className="!py-1 !text-[11.5px]" onClick={() => setCompareOpen(true)}>
+            <span className="flex items-center gap-1.5"><Columns2 className="h-3.5 w-3.5" /> Compare</span>
+          </Btn>
+        ) : undefined} />
 
       <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
         {groups.map((g) => (
@@ -1624,6 +1589,7 @@ function PatientPhotos({ userId, bookingId }: { userId: string; bookingId?: stri
           </div>
         );
       })}
+      <PhotoCompare photos={photos.data ?? []} open={compareOpen} onClose={() => setCompareOpen(false)} />
     </Card>
   );
 }
@@ -1716,12 +1682,7 @@ export function ConsultationProgress({ booking, onChanged }: { booking: Booking;
   );
 }
 
-export function StockPill({ status, qty }: { status: ProductAvailability["status"]; qty: number }) {
-  if (status === "available") return <Tag kind="info">Available</Tag>;
-  if (status === "out_of_stock") return <Tag kind="err">Out of stock</Tag>;
-  if (status === "low_stock") return <Tag kind="warn">Low · {qty} left</Tag>;
-  return <Tag kind="ok">In stock · {qty}</Tag>;
-}
+
 
 /**
  * Product availability — "can I recommend this, and is it here today?".

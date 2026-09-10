@@ -14,6 +14,7 @@ import type {
   Id, Inventory, Notification, Package, PackageAssignment, PreConsultForm, Product, ProductOrder,
   PatientPhoto, ProductAvailability, ProductReview, ServiceCard, ServiceReview, ServiceType, SupportMessage, TaxonomyTree, User, Vendor,
   LifecycleAction, LifecycleState,
+  PrescriptionItem, RxFavourite, RxRecentItem,
 } from "./types";
 
 /* ============================ auth ============================ */
@@ -656,6 +657,21 @@ export const consultationNotes = {
   remove: (id: Id) => requestRaw(`/consultation-notes/${id}`, { method: "DELETE" }),
 };
 
+/* ===================== saved prescriptions (Rx shelf) ===================== */
+export const rxFavourites = {
+  /** This dermatologist's own saved prescriptions, plus any shared clinic-wide. */
+  list: () => requestRaw<RxFavourite[]>("/rx-favourites"),
+  /** What they actually prescribe most, built from their own past notes. */
+  recent: () => requestRaw<RxRecentItem[]>("/rx-favourites/recent"),
+  save: (body: { name: string; items: PrescriptionItem[]; category?: string | null; description?: string | null; advice?: string | null; scope?: "mine" | "clinic" }) =>
+    requestRaw<RxFavourite>("/rx-favourites", { method: "POST", body }),
+  update: (id: Id, body: Partial<{ name: string; category: string | null; description: string | null; advice: string | null; scope: "mine" | "clinic"; items: PrescriptionItem[] }>) =>
+    request<RxFavourite>(`/rx-favourites/${id}`, { method: "PATCH", body }),
+  remove: (id: Id) => requestRaw(`/rx-favourites/${id}`, { method: "DELETE" }),
+  /** Count a use so the shelf orders itself by what this doctor reaches for. */
+  markUsed: (id: Id) => requestRaw(`/rx-favourites/${id}/used`, { method: "POST", body: {} }).catch(() => undefined),
+};
+
 /* ============================ analytics ============================ */
 export type FinancialAnalytics = {
   overview: {
@@ -925,7 +941,7 @@ export const contactChange = {
 export const api = {
   auth, branches, patients, bookings, services, serviceTypes, categories, packages, packageAssignments, consultationNotes,
   doctors, availability, productAvailability, patientPhotos, schedules, feeRequests, products, brands, formulations, coupons, orders, inventory, vendors,
-  appStudio, media, chat, notifications, reviews, support, preConsult, consentForms,
+  appStudio, media, chat, notifications, reviews, support, preConsult, consentForms, rxFavourites,
   serviceCards, analytics, audit, staff, zenoti, contactChange, banners,
 };
 

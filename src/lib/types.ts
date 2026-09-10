@@ -858,11 +858,20 @@ export type PreConsultForm = {
   drugAllergies?: string | null;
   otherAllergies?: string | null;
   dailyRoutine?: Record<string, string | null>;
-  diet?: { type?: string; [k: string]: unknown };
+  diet?: { type?: string; waterIntakeLiters?: number | null; [k: string]: unknown };
   planningForPregnancy?: boolean;
   lastMenstrualPeriod?: string | null;
   additionalInfo?: Record<string, unknown>;
   doctorName?: string | null;
+  /* Answers the record has always carried but the panel never showed, because
+     nothing in the panel could open a form. See src/preconsult.tsx. */
+  maritalStatus?: string | null;
+  numberOfChildren?: number | null;
+  referralSource?: string | null;
+  referredBy?: string | null;
+  /** "Name|fontStyle" as the guest signed it in the app or at the desk. */
+  clientSignature?: string | null;
+  healthDataConsent?: { accepted?: boolean; acceptedAt?: string | null; consentText?: string };
   status: "Draft" | "Submitted" | "Approved" | "Reviewed" | "Rejected";
   dateOfVisit?: string;
   createdAt?: string;
@@ -883,6 +892,33 @@ export type ConsentForm = {
   clinicNotes?: string | null;
   createdAt?: string;
 };
+
+/**
+ * A prescription a dermatologist saved to reuse — the "Favourites" shelf in
+ * the prescription builder. Stores the lines, never a patient: nothing is
+ * applied to anyone until it is added to a consultation, where every field is
+ * still editable.
+ */
+export type RxFavourite = {
+  _id: Id;
+  name: string;
+  category?: string | null;
+  description?: string | null;
+  advice?: string | null;
+  items: PrescriptionItem[];
+  /** `clinic` shares it with every dermatologist; `mine` keeps it private. */
+  scope: "mine" | "clinic";
+  ownerId: Id;
+  ownerName?: string | null;
+  /** False for a colleague's shared favourite — the panel hides edit/delete. */
+  mine: boolean;
+  useCount: number;
+  lastUsedAt?: string | null;
+  updatedAt?: string;
+};
+
+/** One medicine this dermatologist actually prescribes often, with a count. */
+export type RxRecentItem = PrescriptionItem & { uses: number };
 
 export type PrescriptionItem = {
   medicine: string;
