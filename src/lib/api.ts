@@ -7,6 +7,7 @@
  */
 import { request, requestRaw, type Envelope, type Query } from "./http";
 import type {
+  Invoice, MembershipAssignment,
   Admin, AppCustomization, AuditEntry, Banner, Booking, BookingSession, Branch, Brand, Category, Chat, ChatMessage, DeletedAccount, StockMovement,
   Consultation, ConsultationStage, ConsentForm, ConsultationNote, ConsultationReview, Coupon, DermatologistSchedule,
   Doctor, DoctorAvailability, WeeklyBlock,
@@ -621,7 +622,7 @@ export const support = {
 export const preConsult = {
   /** "Pre-consultation form: Completed" for one appointment — one cheap call. */
   statusForBooking: (bookingId: Id) =>
-    request<{ state: "not_started" | "draft" | "completed"; label: string; formId: Id | null; linked: boolean; status?: string; updatedAt?: string }>(
+    request<{ state: "not_started" | "draft" | "completed" | "waived"; label: string; formId: Id | null; linked: boolean; status?: string; updatedAt?: string; reason?: string | null }>(
       `/pre-consult-forms/admin/by-booking/${bookingId}`,
     ),
   list: (q?: Query) => requestRaw<PreConsultForm[]>("/pre-consult-forms/admin/all", { query: q }),
@@ -664,6 +665,14 @@ export const consultationNotes = {
   /** Email the signed prescription to the guest (first send or resend). */
   send: (id: Id) => requestRaw(`/consultation-notes/${id}/send`, { method: "POST", body: {} }),
   remove: (id: Id) => requestRaw(`/consultation-notes/${id}`, { method: "DELETE" }),
+};
+
+/* ============ a guest's bills and memberships — history only, no amounts shown ============ */
+export const invoices = {
+  list: (q?: Query) => requestRaw<Invoice[]>("/invoices", { query: q }),
+};
+export const memberships = {
+  members: (q?: Query) => request<MembershipAssignment[]>("/memberships/members", { query: q }),
 };
 
 /* ===================== saved prescriptions (Rx shelf) ===================== */
@@ -969,7 +978,7 @@ export const contactChange = {
 export const api = {
   auth, branches, patients, bookings, services, serviceTypes, categories, packages, packageAssignments, consultationNotes,
   doctors, availability, productAvailability, patientPhotos, schedules, feeRequests, products, brands, formulations, coupons, orders, inventory, vendors,
-  appStudio, media, chat, notifications, reviews, support, preConsult, consentForms, rxFavourites,
+  appStudio, media, chat, notifications, reviews, support, preConsult, consentForms, rxFavourites, invoices, memberships,
   serviceCards, analytics, audit, staff, zenoti, contactChange, banners,
 };
 

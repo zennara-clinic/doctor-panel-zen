@@ -1,150 +1,270 @@
-import { Package as PackageIcon, ShoppingBag, Sparkles } from "lucide-react";
-import type { Id, PackageAssignment, ProductOrder, User } from "./lib/types";
+import { AlertTriangle, Package as PackageIcon, RefreshCw, ShoppingBag, Sparkles } from "lucide-react";
+import type { Id, Invoice, InvoiceLine, MembershipAssignment, PackageAssignment, ProductOrder, User } from "./lib/types";
 import api from "./lib/api";
+import type { ZenotiMembership, ZenotiOrder, ZenotiPackage, ZenotiUserData } from "./lib/api";
+import { ApiError } from "./lib/http";
 import { useApi } from "./lib/useApi";
-import { Async, Card, SecH, Tag } from "./ui";
+import { Loading, Panel, Prog } from "./ui";
 import { fmtDate, idOf } from "./lib/format";
+import { membershipActive, pkgActive } from "./pages/zenoti";
 
 /**
- * What this guest has actually bought — products, packages, membership.
+ * What this guest has bought — products, treatments paid for, packages and
+ * membership — from every place a purchase can land:
  *
- * A dermatologist could previously see what they had prescribed but not what
- * the guest went on to buy, which makes the most useful question in a review
- * consultation unanswerable: are they using the sunscreen, did they ever pick
- * up the course, is the package they are asking about already paid for. The
- * patient record deliberately withheld retail orders as "the clinic's
- * business"; in the consult room it is clinical history.
+ *   bills (Invoice)            desk, app and mirrored Zenoti bills, with lines
+ *   product orders             app orders and mirrored counter sales
+ *   package assignments        sold at the desk or mirrored from Zenoti
+ *   membership assignments     the Zen Membership register
+ *   the raw Zenoti copy        counter sales, packages and memberships the
+ *                              mirrors have not brought across
  *
- * Prices are NOT shown. That is the same line the rest of the doctor panel
- * draws — product availability rather than the product catalogue, quantities
- * never costs — and what a course cost changes no clinical decision. Amounts
- * stay in the admin panel, where billing lives.
+ * The card used to read only product orders, package assignments and the
+ * `memberType` flag. On prod (2026-09-10) it said "nothing bought" for 102 of
+ * 343 sampled guests who had bills, Zenoti sales or a membership, and it turned
+ * every failed request into the same "nothing".
+ *
+ * The same purchase reaches us by more than one route, so bills are canonical:
+ * anything carrying a bill's number folds into it (the admin panel's
+ * lib/guestLedger.ts rule). No amounts, ever — the consult room shows what was
+ * bought, not what it cost.
  */
 
-type OrderLine = { name: string; qty: number };
+type Kind = "Service" | "Product" | "Package" | "Membership" | "Mixed";
+export type PurchaseRow = { key: string; at: string | null; kind: Kind; items: string; source: "Zenoti" | "App" | "Desk" };
+type PackageRow = { key: string; name: string; used: number; total: number; until: string | null; active: boolean };
+type MembershipView = { active: boolean; name: string; until?: string | null; number?: string | null };
 
-const linesOf = (o: ProductOrder): OrderLine[] =>
-  (o.items ?? []).map((i) => ({
-    name: i.productName
-      ?? (typeof i.productId === "object" && i.productId ? (i.productId as { name?: string }).name : undefined)
-      ?? "Product",
-    qty: i.quantity ?? 1,
-  }));
+const norm = (v?: string | null) => String(v ?? "").trim().toLowerCase();
+const day = (v?: string | null) => (v ? new Date(v).toISOString().slice(0, 10) : "");
 
-/** Delivered / cancelled / on its way — the part that matters to a doctor. */
-function orderTone(status: string): "ok" | "warn" | "err" | "mute" {
-  const s = String(status || "").toLowerCase();
-  if (s.includes("deliver") && !s.includes("failed")) return "ok";
-  if (s.includes("cancel") || s.includes("fail") || s.includes("return")) return "err";
-  if (s.includes("pending") || s.includes("process") || s.includes("ship") || s.includes("confirm")) return "warn";
-  return "mute";
+function buildPurchases(invoices: Invoice[], orders: ProductOrder[], zOrders: ZenotiOrder[], zPkgs: ZenotiPackage[], zMems: ZenotiMembership[]): { rows: PurchaseRow[]; unnamedBills: number } {
+  const known = new Set<string>();
+  const remember = (v?: string | null) => { if (v) known.add(norm(v)); };
+  const rows: PurchaseRow[] = [];
+  let unnamedBills = 0;
+
+  /*
+   * Zenoti sends a bill's lines only when the bill is opened, so most mirrored
+   * bills arrive without items (304 of 330 in the prod sample). When the
+   * guest's Zenoti copy carries the same bill number the items are named from
+   * it; otherwise the bill is counted, not listed — on prod (2026-09-10) no
+   * line-less bill matched by number, and a column of "items unknown" rows
+   * buried the purchases that do have names.
+   */
+  const zByNumber = new Map<string, { name: string; kind: Kind }[]>();
+  const addZ = (num: string | null | undefined, name: string | null | undefined, kind: Kind) => {
+    if (!num || !name) return;
+    zByNumber.set(norm(num), [...(zByNumber.get(norm(num)) ?? []), { name, kind }]);
+  };
+  zOrders.forEach((z) => addZ(z.invoiceNumber, `${z.name}${z.quantity && z.quantity > 1 ? ` ×${z.quantity}` : ""}`, "Product"));
+  zPkgs.forEach((k) => addZ((k as { invoiceNumber?: string | null }).invoiceNumber, k.name, "Package"));
+  zMems.forEach((m) => addZ((m as { invoiceNumber?: string | null }).invoiceNumber, m.name, "Membership"));
+  const kindOf = (l: InvoiceLine): Kind =>
+    l.kind === "product" ? "Product" : l.kind === "package" ? "Package" : l.kind === "membership" ? "Membership" : "Service";
+
+  for (const i of invoices) {
+    remember(i.invoiceNumber);
+    remember(i.receiptNumber);
+    remember(i.zenotiSource?.invoiceNumber);
+    remember(i.zenotiSource?.receiptNumber);
+    if (i.status === "void") continue;
+    const lines = i.lines ?? [];
+    const fromZenoti = lines.length ? [] : [i.invoiceNumber, i.receiptNumber, i.zenotiSource?.invoiceNumber, i.zenotiSource?.receiptNumber]
+      .flatMap((n) => (n ? zByNumber.get(norm(n)) ?? [] : []));
+    const kinds = new Set(lines.length ? lines.map(kindOf) : fromZenoti.map((z) => z.kind));
+    const names = lines.length ? lines.map((l) => `${l.name}${l.qty > 1 ? ` ×${l.qty}` : ""}`) : [...new Set(fromZenoti.map((z) => z.name))];
+    if (!names.length) { unnamedBills += 1; continue; }
+    rows.push({
+      key: `inv:${i._id}`,
+      at: i.closedAt || i.issuedAt || null,
+      kind: kinds.size === 1 ? [...kinds][0] : kinds.size === 0 ? "Service" : "Mixed",
+      items: `${names.slice(0, 3).join(", ")}${names.length > 3 ? ` +${names.length - 3} more` : ""}`,
+      source: i.source === "zenoti" ? "Zenoti" : i.source === "app" ? "App" : "Desk",
+    });
+  }
+
+  const counterSale = new Set<string>();
+  for (const o of orders) {
+    if (o.orderStatus === "Cancelled") continue;
+    if (o.zenotiInvoiceId && known.has(norm(o.zenotiInvoiceId))) continue;
+    if (known.has(norm(o.orderNumber))) continue;
+    const items = o.items ?? [];
+    if (o.source === "zenoti") items.forEach((it) => counterSale.add(`${norm(it.productName)}|${day(o.createdAt)}`));
+    rows.push({
+      key: `ord:${o._id}`,
+      at: o.createdAt ?? null,
+      kind: "Product",
+      items: items.slice(0, 3).map((it) => `${it.productName ?? "Product"}${it.quantity > 1 ? ` ×${it.quantity}` : ""}`).join(", ")
+        + (items.length > 3 ? ` +${items.length - 3} more` : ""),
+      source: o.source === "zenoti" ? "Zenoti" : "App",
+    });
+  }
+
+  zOrders.forEach((z, i) => {
+    if (z.invoiceNumber && known.has(norm(z.invoiceNumber))) return;
+    if (counterSale.has(`${norm(z.name)}|${day(z.saleDate)}`)) return;
+    rows.push({
+      key: `zord:${i}`,
+      at: z.saleDate ?? null,
+      kind: "Product",
+      items: `${z.name ?? "Product"}${z.quantity && z.quantity > 1 ? ` ×${z.quantity}` : ""}`,
+      source: "Zenoti",
+    });
+  });
+
+  const t = (v: string | null) => (v ? new Date(v).getTime() : 0);
+  return { rows: rows.sort((a, b) => t(b.at) - t(a.at)), unnamedBills };
+}
+
+function buildPackages(assignments: PackageAssignment[], zPkgs: ZenotiPackage[]): PackageRow[] {
+  const now = Date.now();
+  const mirrored = new Set(assignments.map((a) => a.zenotiUserPackageId).filter(Boolean).map(String));
+  const rows: PackageRow[] = assignments.map((a) => {
+    const total = a.usageTracking?.totalSessions ?? (a.packageDetails?.services ?? []).reduce((n, s) => n + (Number(s.sessions) || 1), 0);
+    const used = a.usageTracking?.usedSessions ?? (a.sessions ?? []).filter((s) => s.status === "Completed").length;
+    return {
+      key: `pa:${a._id}`,
+      name: a.packageDetails?.packageName ?? "Package",
+      used, total,
+      until: a.validUntil ?? null,
+      active: a.status === "Active" && (!a.validUntil || new Date(a.validUntil).getTime() > now),
+    };
+  });
+  for (const k of zPkgs) {
+    if (k.id && mirrored.has(String(k.id))) continue;
+    const total = k.sessionsTotal ?? 0;
+    rows.push({
+      key: `zp:${k.id ?? k.name}`,
+      name: k.name ?? "Package",
+      used: Math.max(0, total - (k.sessionsRemaining ?? 0)),
+      total,
+      until: k.neverExpires ? null : k.endDate ?? null,
+      active: pkgActive(k),
+    });
+  }
+  return rows.sort((a, b) => Number(b.active) - Number(a.active));
+}
+
+function membershipView(assignments: MembershipAssignment[], zMems: ZenotiMembership[], patient?: User | null): MembershipView | null {
+  const now = Date.now();
+  const nameOf = (m: MembershipAssignment) => m.snapshot?.name || (typeof m.membershipId === "object" ? m.membershipId?.name : null) || "Zen Membership";
+  const live = assignments.find((m) => m.status === "Active" && (!m.validUntil || new Date(m.validUntil).getTime() > now));
+  if (live) return { active: true, name: nameOf(live), until: live.validUntil, number: live.memberNumber };
+  const zLive = zMems.find(membershipActive);
+  if (zLive) return { active: true, name: zLive.name ?? "Zen Membership", until: zLive.expiryDate };
+  if (patient?.memberType === "Zen Member") return { active: true, name: "Zen Membership", until: patient.zenMembershipExpiryDate };
+  const past = [...assignments].sort((a, b) => new Date(b.validUntil ?? 0).getTime() - new Date(a.validUntil ?? 0).getTime())[0];
+  if (past) return { active: false, name: nameOf(past), until: past.validUntil };
+  if (zMems[0]) return { active: false, name: zMems[0].name ?? "Membership", until: zMems[0].expiryDate };
+  return null;
 }
 
 export function useGuestPurchases(userId: Id | "" | null | undefined) {
   return useApi(async () => {
-    if (!userId) return { orders: [] as ProductOrder[], packages: [] as PackageAssignment[] };
-    const [orders, packages] = await Promise.all([
-      /*
-       * Both sources on purpose. ProductOrder carries app orders AND the
-       * counter sales mirrored from Zenoti, and the panel's usual default is
-       * app-only — but "what has this guest bought" has to include what they
-       * bought at the desk, which is most of it.
-       */
-      api.orders.list({ userId, limit: 50 })
-        .then((r) => (r.data ?? []).filter((o) => idOf(o.userId) === userId)).catch(() => [] as ProductOrder[]),
-      api.packageAssignments.list({ userId, limit: 50 })
-        .then((r) => (r.data ?? []).filter((a) => idOf(a.userId) === userId)).catch(() => [] as PackageAssignment[]),
+    if (!userId) return null;
+    const settled = await Promise.allSettled([
+      api.invoices.list({ userId, limit: 200 }).then((r) => (r.data ?? []).filter((i) => !i.userId || idOf(i.userId) === userId)),
+      api.orders.list({ userId, limit: 200 }).then((r) => (r.data ?? []).filter((o) => idOf(o.userId) === userId)),
+      api.packageAssignments.list({ userId, limit: 100 }).then((r) => (r.data ?? []).filter((a) => idOf(a.userId) === userId)),
+      api.memberships.members({ userId, status: "all", limit: 50 }).then((rows) => (rows ?? []).filter((m) => idOf(m.userId) === userId)),
+      // A guest who never came through Zenoti has no mirror; that is not a failure.
+      api.zenoti.user(userId).catch((e) => { if (e instanceof ApiError && e.status === 404) return null; throw e; }),
     ]);
-    return { orders, packages };
+    const pick = <T,>(r: PromiseSettledResult<T>, fallback: T): T => (r.status === "fulfilled" ? r.value : fallback);
+    const invoices = pick(settled[0] as PromiseSettledResult<Invoice[]>, []);
+    const orders = pick(settled[1] as PromiseSettledResult<ProductOrder[]>, []);
+    const assignments = pick(settled[2] as PromiseSettledResult<PackageAssignment[]>, []);
+    const memberships = pick(settled[3] as PromiseSettledResult<MembershipAssignment[]>, []);
+    const zenoti = pick(settled[4] as PromiseSettledResult<ZenotiUserData | null>, null);
+    const zd = zenoti?.details;
+    return {
+      ...(() => { const b = buildPurchases(invoices, orders, zd?.orders ?? [], zd?.packages ?? [], zd?.memberships ?? []); return { purchases: b.rows, unnamedBills: b.unnamedBills }; })(),
+      packages: buildPackages(assignments, zd?.packages ?? []),
+      memberships,
+      zMems: zd?.memberships ?? [],
+      failed: settled.filter((s) => s.status === "rejected").length,
+    };
   }, [userId]);
 }
 
-/**
- * The card itself. `patient` supplies the membership, which lives on the
- * account rather than in either list.
- */
+const KIND_TONE: Record<Kind, string> = { Service: "", Product: "dz-pill--info", Package: "dz-pill--line", Membership: "dz-pill--ok", Mixed: "dz-pill--line" };
+
 export default function GuestPurchases({ userId, patient, compact }: {
   userId: Id | "" | null | undefined;
   patient?: User | null;
-  /** Sidebar version: fewer rows, no headings. */
+  /** Sidebar version: fewer rows. */
   compact?: boolean;
 }) {
   const q = useGuestPurchases(userId);
-  const isZenMember = patient?.memberType === "Zen Member";
-  const membershipEnds = patient?.zenMembershipExpiryDate;
-  const limit = compact ? 4 : 20;
+  const d = q.data;
+  const membership = d ? membershipView(d.memberships, d.zMems, patient) : null;
+  const activePkgs = d?.packages.filter((p) => p.active) ?? [];
+  const finishedPkgs = (d?.packages.length ?? 0) - activePkgs.length;
+  const nothing = !!d && d.purchases.length === 0 && d.unnamedBills === 0 && d.packages.length === 0 && !membership;
+  const limit = compact ? 4 : 25;
 
   return (
-    <Card className="p-5">
-      <SecH t="What they've bought" em={compact ? undefined : "Products, packages and membership — no prices in the consult room"} />
-      <Async q={q} label="" rows={2}>
-        {({ orders, packages }) => {
-          const nothing = orders.length === 0 && packages.length === 0 && !isZenMember;
-          if (nothing) {
-            return <div className="text-[13.5px] text-ink3">Nothing bought yet — no products, packages or membership on this guest.</div>;
-          }
-          return (
-            <div className="grid gap-3">
-              {isZenMember && (
-                <div className="flex items-center gap-2 rounded-xl bg-sage px-3 py-2.5">
-                  <Sparkles className="h-4 w-4 shrink-0 text-primary" />
-                  <span className="text-[14px] font-semibold text-ink">Zen Member</span>
-                  {membershipEnds && <span className="text-[12.5px] text-ink3">until {fmtDate(membershipEnds)}</span>}
-                </div>
-              )}
+    <Panel icon={<ShoppingBag />} title="What they’ve bought"
+      sub={compact ? undefined : "Purchases, packages and membership from the app, the desk and Zenoti — no prices in the consult room"}
+      right={q.error || d?.failed ? <button type="button" className="dz-link" onClick={q.reload}><RefreshCw />Retry</button> : undefined}>
+      {q.initial && !d ? <Loading label="" rows={2} /> : q.error && !d ? (
+        <div className="dz-note dz-note--warn"><AlertTriangle /><span>Couldn’t load what this guest has bought.</span></div>
+      ) : !d ? null : nothing ? (
+        d.failed
+          ? <div className="dz-note dz-note--warn"><AlertTriangle /><span>Part of the purchase history couldn’t load, so this guest may have bought more than shows here.</span></div>
+          : <div className="dz-hint">No purchases on record — nothing from the app, the desk or Zenoti.</div>
+      ) : (
+        <div className="dz-stack--sm">
+          {membership && (membership.active ? (
+            <div className="flex items-center gap-2.5 rounded-xl bg-sage px-3 py-2.5">
+              <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+              <span className="min-w-0 flex-1 text-[14px] font-bold text-ink">{membership.name}</span>
+              <span className="shrink-0 text-[13px] text-ink2">{membership.until ? `until ${fmtDate(membership.until)}` : "active"}</span>
+            </div>
+          ) : (
+            <div className="text-[13.5px] text-ink3">{membership.name} ended{membership.until ? ` ${fmtDate(membership.until)}` : ""}.</div>
+          ))}
 
-              {packages.length > 0 && (
-                <div>
-                  <div className="mb-1 flex items-center gap-1.5 text-[13px] font-extrabold text-ink2">
-                    <PackageIcon className="h-4 w-4" /> Packages
+          {activePkgs.length > 0 && (
+            <div>
+              <div className="mb-1 flex items-center gap-1.5 text-[13px] font-extrabold text-ink2"><PackageIcon className="h-4 w-4" />Packages</div>
+              {activePkgs.slice(0, limit).map((p) => (
+                <div key={p.key} className="grid gap-1.5 border-b border-border py-2.5 last:border-0">
+                  <div className="flex items-center justify-between gap-3 text-[14px]">
+                    <b className="min-w-0 truncate">{p.name}</b>
+                    <span className="shrink-0 text-[13px] text-ink2">{p.total ? `${Math.max(0, p.total - p.used)} of ${p.total} left` : "Active"}</span>
                   </div>
-                  <div className="grid gap-1">
-                    {packages.slice(0, limit).map((a) => {
-                      const used = a.usageTracking?.usedSessions ?? 0;
-                      const total = a.usageTracking?.totalSessions ?? 0;
-                      return (
-                        <div key={a._id} className="flex items-center gap-2 border-b border-border py-2 last:border-0 text-[13.5px]">
-                          <span className="min-w-0 flex-1 truncate text-ink2">{a.packageDetails?.packageName ?? "Package"}</span>
-                          {total > 0 && (
-                            <span className={`shrink-0 tabular-nums ${used >= total ? "text-ink3" : "font-semibold text-ink"}`}>
-                              {used}/{total} used
-                            </span>
-                          )}
-                          <Tag kind={a.status === "Active" ? "ok" : a.status === "Completed" ? "mute" : "warn"}>{a.status}</Tag>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  {p.total > 0 && <Prog pct={(p.used / p.total) * 100} w="w-full" />}
+                  {p.until && <span className="text-[12.5px] text-ink3">Valid until {fmtDate(p.until)}</span>}
                 </div>
-              )}
+              ))}
+            </div>
+          )}
+          {finishedPkgs > 0 && <div className="text-[13px] text-ink3">{finishedPkgs} earlier package{finishedPkgs === 1 ? "" : "s"}, used up or expired.</div>}
 
-              {orders.length > 0 && (
-                <div>
-                  <div className="mb-1 flex items-center gap-1.5 text-[13px] font-extrabold text-ink2">
-                    <ShoppingBag className="h-4 w-4" /> Products
-                  </div>
-                  <div className="grid gap-1">
-                    {orders.slice(0, limit).map((o) => (
-                      <div key={o._id} className="border-b border-border py-2 last:border-0">
-                        <div className="flex items-center gap-2 text-[13.5px]">
-                          <span className="shrink-0 text-ink3">{fmtDate(o.createdAt)}</span>
-                          <span className="min-w-0 flex-1 truncate text-ink2">
-                            {linesOf(o).map((l) => `${l.name}${l.qty > 1 ? ` ×${l.qty}` : ""}`).join(", ") || "—"}
-                          </span>
-                          <Tag kind={orderTone(o.orderStatus)}>{o.orderStatus}</Tag>
-                        </div>
-                      </div>
-                    ))}
-                    {orders.length > limit && (
-                      <div className="pt-1 text-[12.5px] text-ink3">+{orders.length - limit} earlier order{orders.length - limit === 1 ? "" : "s"}</div>
-                    )}
-                  </div>
+          {(d.purchases.length > 0 || d.unnamedBills > 0) && (
+            <div>
+              <div className="mb-1 flex items-center gap-1.5 text-[13px] font-extrabold text-ink2"><ShoppingBag className="h-4 w-4" />Purchases{d.purchases.length ? ` · ${d.purchases.length}` : ""}</div>
+              {d.purchases.slice(0, limit).map((r) => (
+                <div key={r.key} className="flex flex-wrap items-start gap-x-3 gap-y-1 border-b border-border py-2.5 last:border-0">
+                  <span className="w-[88px] shrink-0 text-[13px] text-ink3">{r.at ? fmtDate(r.at) : "—"}</span>
+                  <span className="min-w-0 flex-1 text-[14px] text-ink">{r.items}</span>
+                  <span className={`dz-pill dz-pill--sm ${KIND_TONE[r.kind]}`}>{r.kind === "Service" ? "Treatment" : r.kind}</span>
+                </div>
+              ))}
+              {d.purchases.length > limit && <div className="pt-1 text-[13px] text-ink3">+{d.purchases.length - limit} earlier</div>}
+              {d.unnamedBills > 0 && (
+                <div className="pt-1.5 text-[13px] text-ink3">
+                  {d.purchases.length ? "Also " : ""}{d.unnamedBills} clinic bill{d.unnamedBills === 1 ? "" : "s"} from Zenoti without item detail yet.
                 </div>
               )}
             </div>
-          );
-        }}
-      </Async>
-    </Card>
+          )}
+
+          {d.failed > 0 && <div className="dz-hint">Part of the history couldn’t load — tap Retry.</div>}
+        </div>
+      )}
+    </Panel>
   );
 }

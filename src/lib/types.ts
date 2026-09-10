@@ -408,6 +408,10 @@ export type PackageAssignment = {
   notes?: string;
   assignedByName?: string;
   zenotiPackageId?: string | null;
+  /** Zenoti's user_package_id when mirrored from Zenoti — the same package also sits in the raw Zenoti copy. */
+  zenotiUserPackageId?: string | null;
+  source?: string | null;
+  invoiceId?: Id | null;
   zenotiInvoiceId?: string | null;
   zenotiSyncStatus?: "pending" | "synced" | "dryrun" | "skipped" | "failed" | "review" | null;
   zenotiSyncError?: string | null;
@@ -673,6 +677,8 @@ export type ProductOrder = {
   stockRestoredAt?: string;
   notes?: string;
   createdAt?: string;
+  source?: "app" | "zenoti" | null;
+  zenotiInvoiceId?: string | null;
 };
 
 /* ---------------- stock ---------------- */
@@ -1095,4 +1101,39 @@ export type SlotDay = {
   note?: string;
   reason?: string;
   slots: Slot[];
+};
+
+/* ---------------- billing, read for history only (never shown with amounts) ---------------- */
+export type InvoiceLine = {
+  _id: Id;
+  kind: "service" | "product" | "package" | "membership" | "custom";
+  name: string;
+  qty: number;
+  bookingId?: Id | null;
+  redeemed?: { kind: "package" | "membership" | null; label?: string | null };
+};
+export type Invoice = {
+  _id: Id;
+  invoiceNumber: string;
+  receiptNumber?: string | null;
+  userId?: Id | null;
+  status: "open" | "closed" | "void";
+  source: "desk" | "app" | "zenoti";
+  zenotiSource?: { invoiceNumber?: string | null; receiptNumber?: string | null };
+  lines: InvoiceLine[];
+  bookingIds?: Id[];
+  issuedAt: string;
+  closedAt?: string | null;
+};
+export type MembershipAssignment = {
+  _id: Id;
+  userId: Id | User;
+  membershipId: Id | { _id: Id; name?: string; code?: string };
+  memberNumber?: string | null;
+  snapshot?: { name?: string };
+  status: "Active" | "Expired" | "Cancelled";
+  validFrom?: string;
+  validUntil?: string | null;
+  source?: "panel" | "app" | "zenoti";
+  createdAt?: string;
 };

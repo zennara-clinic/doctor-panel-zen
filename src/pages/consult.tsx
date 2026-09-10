@@ -149,15 +149,20 @@ function Workspace({ bookingId }: { bookingId: string }) {
       .then((r) => (r.data ?? []).filter((f) => f.status !== "Draft")[0] ?? null).catch(() => null);
     return latest ? { doc: latest, linked: false } : null;
   }, [bookingId, userId]);
+  const intake = useApi(() => api.preConsult.statusForBooking(bookingId).catch(() => null), [bookingId]);
   const consent = useApi(
     () => (userId ? api.consentForms.list({ userId, limit: 1 }).then((r) => (r.data ?? [])[0] ?? null).catch(() => null) : Promise.resolve(null)),
     [userId],
   );
   const history = useApi(async () => {
-    if (!userId) return { notes: [] as ConsultationNote[], visits: 0 };
+    if (!userId) return { notes: [] as ConsultationNote[], visits: [] as Booking[] | null };
     const [notes, visits] = await Promise.all([
-      api.consultationNotes.list({ userId, limit: 20 }).then((r) => (r.data ?? []).filter((n) => idOf(n.bookingId) !== bookingId)).catch(() => []),
-      api.bookings.list({ userId, limit: 50 }).then((r) => (r.data ?? []).filter((b) => b._id !== bookingId && b.status === "Completed").length).catch(() => 0),
+      api.consultationNotes.list({ userId, limit: 50 }).then((r) => r.data ?? []).catch(() => [] as ConsultationNote[]),
+      // Every practitioner's visits, not only this dermatologist's: a laser
+      // session with a therapist last month is part of this guest's history.
+      api.bookings.list({ userId, limit: 100 })
+        .then((r) => (r.data ?? []).filter((b) => b._id !== bookingId && idOf(b.userId) === userId))
+        .catch(() => null as Booking[] | null),
     ]);
     return { notes, visits };
   }, [userId, bookingId]);
@@ -326,6 +331,7 @@ function Workspace({ bookingId }: { bookingId: string }) {
 
   const guest = (
     <GuestContext bk={bk} patient={p} form={form} consent={consent.data ?? null} history={history.data}
+      paperIntake={intake.data?.state === "waived"}
       doctorName={doctorName} userId={userId}
       onOpenRecord={() => nav(`/dermatologist/patient?id=${userId}`, { state: { id: userId } })}
       onOpenVisit={(id) => nav(`/dermatologist/consultation?booking=${id}`)}
@@ -557,11 +563,13 @@ function VisitBanner({ bk, signed, editing, note, onEdit }: {
 
 /* ------------------------------------------------------------ guest context */
 
-function GuestContext({ bk, patient: p, form, consent, history, doctorName, userId, onOpenRecord, onOpenVisit, onChanged, toast, audit }: {
+function GuestContext({ bk, patient: p, form, consent, history, paperIntake, doctorName, userId, onOpenRecord, onOpenVisit, onChanged, toast, audit }: {
   bk: Booking; patient: User | null | undefined;
+  /** No app form, but the clinic holds this returning guest's intake on paper. */
+  paperIntake?: boolean;
   form: { data: { doc: PreConsultForm; linked: boolean } | null | undefined; initial: boolean; reload: () => void };
   consent: { _id: string; patientName: string; createdAt?: string; status: string; doctorSignature?: string | null } | null;
-  history?: { notes: ConsultationNote[]; visits: number };
+  history?: { notes: ConsultationNote[]; visits: Booking[] | null };
   doctorName: string; userId: string;
   onOpenRecord: () => void; onOpenVisit: (bookingId: string) => void; onChanged: () => void;
   toast: (m: string) => void; audit: ReturnType<typeof useStore>["audit"];
@@ -579,7 +587,15 @@ function GuestContext({ bk, patient: p, form, consent, history, doctorName, user
   const facts: [string, ReactNode][] = [];
   if (age || p?.gender) facts.push(["Age / gender", [age ? `${age} yrs` : null, p?.gender].filter(Boolean).join(" · ")]);
   if (p?.phone) facts.push(["Phone", p.phone]);
-  facts.push(["Visits", `${(history?.visits ?? 0) + (bk.status === "Completed" ? 1 : 0)} completed`]);
+  const now = Date.now();
+  const earlier = (history?.visits ?? [])
+    .filter((b) => b.status !== "Cancelled" && new Date(b.confirmedDate || b.preferredDate).getTime() <= now);
+  const completedBefore = earlier.filter((b) => b.status === "Completed");
+  const noteByBooking = new Map((history?.notes ?? []).map((n) => [idOf(n.bookingId), n] as const));
+  if (history?.visits) {
+    const last = completedBefore[0];
+    facts.push(["Visits", `${completedBefore.length + (bk.status === "Completed" ? 1 : 0)} completed${last ? ` · last ${fmtDate(last.confirmedDate || last.preferredDate)}` : ""}`]);
+  }
   if (p?.memberType === "Zen Member") facts.push(["Membership", "Zen Member"]);
   if (p?.medicalHistory?.trim()) facts.push(["Medical history", p.medicalHistory]);
 
@@ -604,7 +620,9 @@ function GuestContext({ bk, patient: p, form, consent, history, doctorName, user
         sub={f ? (form.data?.linked ? `Filled for this visit · ${fmtDate(f.dateOfVisit || f.createdAt)}` : `From ${fmtDate(f.dateOfVisit || f.createdAt)} — not this visit`) : undefined}
         right={f ? <span className={`dz-pill dz-pill--sm ${f.status === "Reviewed" || f.status === "Approved" ? "dz-pill--ok" : "dz-pill--warn"}`}>{f.status}</span> : undefined}>
         {form.initial ? <Loading label="" rows={2} /> : !f ? (
-          <div className="dz-hint">No pre-consult form on this guest’s record. The desk can hand them the walk-in tablet to fill it.</div>
+          paperIntake
+            ? <div className="dz-note dz-note--ok"><Check /><span>Intake held on paper at the clinic — this guest has been seen before. There is no app form to show.</span></div>
+            : <div className="dz-hint">No pre-consult form on this guest’s record. The desk can hand them the walk-in tablet to fill it.</div>
         ) : (
           <div className="dz-stack--sm">
             {intakeRows.length ? <dl className="dz-kv">{intakeRows.map(([k, v]) => <FactRow key={k} k={k} v={v} />)}</dl>
@@ -647,18 +665,29 @@ function GuestContext({ bk, patient: p, form, consent, history, doctorName, user
         )}
       </Panel>
 
-      <Panel icon={<History />} title="Earlier consultations" sub={history ? (history.notes.length ? `${history.notes.length} on record` : undefined) : undefined}>
-        {!history ? <Loading label="" rows={2} /> : history.notes.length === 0 ? (
-          <div className="dz-hint">First consultation on record.</div>
+      <Panel icon={<History />} title="Earlier visits"
+        sub={history?.visits ? `${completedBefore.length} completed · every practitioner` : undefined}
+        right={<button type="button" className="dz-link" onClick={onOpenRecord} disabled={!userId}>All<ChevronRight /></button>}>
+        {!history ? <Loading label="" rows={2} /> : history.visits === null ? (
+          <div className="dz-note dz-note--warn"><AlertTriangle /><span>Couldn’t load earlier visits.</span></div>
+        ) : earlier.length === 0 ? (
+          <div className="dz-hint">No earlier visits on record.</div>
         ) : (
           <div className="dz-tl">
-            {history.notes.slice(0, 6).map((n) => (
-              <button key={n._id} type="button" className="dz-tl__item" onClick={() => onOpenVisit(idOf(n.bookingId))}>
-                <div className="dz-tl__date">{fmtDate(n.completedAt || n.createdAt)}{n.doctorName ? ` · ${n.doctorName}` : ""}{n.status !== "Completed" ? " · draft" : ""}</div>
-                <div className="dz-tl__title">{n.primaryDiagnosis || n.assessment || n.complaint || "Consultation"}</div>
-                {!!n.prescription?.length && <div className="dz-tl__text">Rx: {n.prescription.map((r) => r.medicine).join(", ")}</div>}
-              </button>
-            ))}
+            {earlier.slice(0, 6).map((b) => {
+              const n = noteByBooking.get(b._id);
+              const who = b.specialistName || b.zenotiTherapistName || b.therapistName;
+              const dx = n?.primaryDiagnosis || n?.assessment;
+              return (
+                <button key={b._id} type="button" className="dz-tl__item" onClick={() => onOpenVisit(b._id)}>
+                  <div className="dz-tl__date">{fmtDate(b.confirmedDate || b.preferredDate)}{who ? ` · ${who}` : ""}{b.status !== "Completed" ? ` · ${b.status === "No Show" ? "no-show" : b.status.toLowerCase()}` : ""}</div>
+                  <div className="dz-tl__title">{dx || bookingServiceName(b, "Visit")}</div>
+                  {dx && <div className="dz-tl__text">{bookingServiceName(b, "Visit")}</div>}
+                  {!!n?.prescription?.length && <div className="dz-tl__text">Rx: {n.prescription.map((r) => r.medicine).join(", ")}</div>}
+                </button>
+              );
+            })}
+            {earlier.length > 6 && <div className="dz-hint">+{earlier.length - 6} earlier — see the full record.</div>}
           </div>
         )}
       </Panel>

@@ -226,7 +226,9 @@ export function PatientRecord() {
         const zd = clinic.data?.details ?? null;
         const knownZenotiIds = new Set(bookings.map((b) => b.zenotiAppointmentId).filter(Boolean));
         const zAppts = (zd?.appointments ?? []).filter((a) => !a.id || !knownZenotiIds.has(a.id));
-        const zPkgs = zd?.packages ?? [];
+        // A package mirrored into PackageAssignment also sits in the raw Zenoti copy; list it once.
+        const mirroredPkgIds = new Set(assignments.map((a) => a.zenotiUserPackageId).filter(Boolean).map(String));
+        const zPkgs = (zd?.packages ?? []).filter((k) => !k.id || !mirroredPkgIds.has(String(k.id)));
         const zMems = zd?.memberships ?? [];
         const zNotes = zd?.notes ?? [];
         const zForms = zd?.forms ?? [];
@@ -299,12 +301,20 @@ export function PatientRecord() {
                     </dl>
                   </Panel>
 
-                  <Panel icon={<History />} title="Latest consultation"
-                    right={sortedNotes[0] ? <Btn kind="secondary" size="sm" onClick={() => openConsult(idOf(sortedNotes[0].bookingId))}>Open<ChevronRight /></Btn> : undefined}>
-                    {!sortedNotes[0] ? <div className="dz-hint">No consultation notes yet.</div> : (
-                      <NoteSummary n={sortedNotes[0]} />
-                    )}
-                  </Panel>
+                  {(() => {
+                    const lastDone = sortedVisits.find((b) => b.status === "Completed");
+                    const n = lastDone ? notes.find((x) => idOf(x.bookingId) === lastDone._id) : null;
+                    const who = lastDone ? lastDone.specialistName || lastDone.zenotiTherapistName || lastDone.therapistName : null;
+                    return (
+                      <Panel icon={<History />} title="Latest visit"
+                        sub={lastDone ? `${fmtDateLong(lastDone.confirmedDate || lastDone.preferredDate)}${who ? ` · ${who}` : ""}` : undefined}
+                        right={lastDone ? <Btn kind="secondary" size="sm" onClick={() => openConsult(lastDone._id)}>Open<ChevronRight /></Btn> : undefined}>
+                        {!lastDone ? <div className="dz-hint">No completed visits on record.</div>
+                          : n ? <NoteSummary n={n} />
+                          : <div className="dz-hint">{bookingServiceName(lastDone, "Visit")}. No note was written in this panel for that visit.</div>}
+                      </Panel>
+                    );
+                  })()}
                 </div>
 
                 <div className="dz-stack">
@@ -341,14 +351,17 @@ export function PatientRecord() {
                     )}
                   </Panel>
 
-                  <GuestPurchases userId={id} patient={p} compact />
+                  <GuestPurchases userId={id} patient={p} />
                 </div>
               </div>
             )}
 
             {tab === "consultations" && (
               <div className="dz-stack">
-                {sortedNotes.length === 0 && zNotes.length === 0 && <Empty icon={<FileText />} title="No consultation notes yet" />}
+                {sortedNotes.length === 0 && zNotes.length === 0 && (
+                  <Empty icon={<FileText />} title="No notes written yet"
+                    hint={`${bookings.filter((b) => b.status === "Completed").length} completed visits are listed under Visits. A note appears here once one is written in this panel or in Zenoti.`} />
+                )}
                 {sortedNotes.map((n) => (
                   <Panel key={n._id} icon={<Stethoscope />}
                     title={fmtDateLong(n.completedAt || n.createdAt)}

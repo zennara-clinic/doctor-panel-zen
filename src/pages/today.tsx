@@ -60,6 +60,18 @@ export function MyDay() {
     return parts.flat();
   }, [idsKey]);
 
+  /*
+   * Where each guest's intake stands: submitted, started, held on paper at the
+   * clinic (a returning guest), or genuinely missing. Only the last one earns
+   * the "No pre-consult form" warning.
+   */
+  const intake = useApi(async () => {
+    const entries = await Promise.all(rows.map((b) => api.preConsult.statusForBooking(b._id)
+      .then((st) => [b._id, st.state] as const)
+      .catch(() => [b._id, "unknown"] as const)));
+    return new Map<string, string>(entries);
+  }, [idsKey]);
+
   const notes = useApi(
     () => (me.data ? api.consultationNotes.list({ doctorId: me.data.doctorId, limit: 300 }).then((r) => r.data ?? []) : Promise.resolve([])),
     [me.data?._id, rows.map((b) => `${b._id}:${b.status}`).join(",")],
@@ -80,11 +92,12 @@ export function MyDay() {
       if (a && !/^none/i.test(a)) allergyByUser.set(idOf(f.userId), a);
     }
     return (b: Booking): VisitFlags => ({
-      form: formByBooking.get(b._id) ?? null,
+      // Until the intake state is known, assume nothing is missing rather than flash a warning.
+      form: formByBooking.get(b._id) ?? (!intake.data ? "loading" : intake.data.get(b._id) === "not_started" ? null : intake.data.get(b._id) ?? "unknown"),
       note: noteByBooking.get(b._id) ?? null,
       allergy: allergyByUser.get(idOf(b.userId)) ?? null,
     });
-  }, [forms.data, noteByBooking]);
+  }, [forms.data, noteByBooking, intake.data]);
 
   const openRows = rows.filter(isOpenVisit);
   const doneRows = rows.filter((b) => !isOpenVisit(b));
