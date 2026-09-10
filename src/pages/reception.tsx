@@ -655,8 +655,16 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
       await api.bookings.create({
         consultationId: serviceId,
         fullName: name.trim(),
-        mobileNumber: presetUser ? "" : phone.trim(),
-        email: presetUser ? undefined : email.trim() || undefined,
+        /*
+         * A guest on file: send the contact the API gave us, if it gave any.
+         * An API before 1650b89 still returns it and requires mobileNumber;
+         * from 1650b89 it is stripped before the panel, so "" goes and the
+         * server fills it from userId. Works in either deploy order.
+         */
+        mobileNumber: presetUser ? (presetUser.phone ?? "") : phone.trim(),
+        email: presetUser
+          ? (presetUser.email && !presetUser.email.endsWith("@zennara.local") ? presetUser.email : undefined)
+          : email.trim() || undefined,
         preferredLocation: location,
         preferredDate: date,
         preferredTimeSlots: [time],
