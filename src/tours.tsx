@@ -64,7 +64,7 @@ export function replayTour() {
 }
 
 export function Tours() {
-  const { role, loggedIn, admin } = useStore();
+  const { role, loggedIn, admin, updateAdmin } = useStore();
   const loc = useLocation();
   const [run, setRun] = useState(false);
   const [steps, setSteps] = useState<Step[]>([]);
@@ -78,13 +78,15 @@ export function Tours() {
       const panelKey = `tour-${role}`;
       localStorage.removeItem(panelKey);
       api.auth.resetTours().catch(() => undefined);
+      // The server forgot every tour; forget them here too, or the next route change reads "seen" and stops the replay.
+      if (admin) updateAdmin({ ...admin, toursSeen: [] });
       setSteps(PANEL_TOURS[role] ?? []);
       setTourKey(panelKey);
       setRun(true);
     };
     window.addEventListener(REPLAY_EVENT, onReplay);
     return () => window.removeEventListener(REPLAY_EVENT, onReplay);
-  }, [role]);
+  }, [role, admin, updateAdmin]);
 
   useEffect(() => {
     if (!loggedIn) { setRun(false); return; }
@@ -96,14 +98,15 @@ export function Tours() {
     }
     const mod = MODULE_TOURS[loc.pathname];
     // The consultation tour points at the open-consult screen, not the guest picker.
-    const consultWithoutGuest = loc.pathname === "/dermatologist/consultation" && !(loc.state as { bookingId?: string } | null)?.bookingId;
+    // Every link opens a consultation with ?booking=<id>.
+    const consultWithoutGuest = loc.pathname === "/dermatologist/consultation" && !new URLSearchParams(loc.search).get("booking");
     if (mod && !consultWithoutGuest && !seen(mod.key)) {
       setSteps(mod.steps); setTourKey(mod.key);
       const t = setTimeout(() => setRun(true), 600);
       return () => clearTimeout(t);
     }
     setRun(false);
-  }, [role, loggedIn, loc.pathname, admin?.toursSeen]);
+  }, [role, loggedIn, loc.pathname, loc.search, admin?.toursSeen]);
 
   const cb = (data: CallBackProps) => {
     if (data.status === STATUS.FINISHED || data.status === STATUS.SKIPPED) {

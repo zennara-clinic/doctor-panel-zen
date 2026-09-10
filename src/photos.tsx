@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowLeftRight, Camera, Check, ChevronLeft, ChevronRight, Columns2, ImagePlus, Images, SplitSquareHorizontal, Trash2, X,
+  ArrowLeftRight, Camera, Check, ChevronLeft, ChevronRight, Columns2, Eye, EyeOff, ImagePlus, Images, Pencil, SplitSquareHorizontal, Trash2, X,
 } from "lucide-react";
 import type { Id, PatientPhoto } from "./lib/types";
+import { MarkLayer, MarkNotes, PhotoMarker, markCount } from "./annotate";
 import api from "./lib/api";
 import { useApi } from "./lib/useApi";
 import { useStore } from "./store";
@@ -74,18 +75,21 @@ export function PhotoInput({ mode, onFiles, children, className, disabled }: {
 
 /* ------------------------------------------------------------------ tagging */
 
-function TagSheet({ files, userId, bookingId, defaultPhase, onClose, onSaved, onMore }: {
-  files: File[]; userId: Id; bookingId?: Id | null; defaultPhase: Phase;
-  onClose: () => void; onSaved: (count: number, phase: Phase) => void; onMore: (files: File[]) => void;
+function TagSheet({ files, userId, bookingId, defaultPhase, defaultArea = "", onClose, onSaved, onMore, onMark }: {
+  files: File[]; userId: Id; bookingId?: Id | null; defaultPhase: Phase; defaultArea?: string;
+  onClose: () => void; onSaved: (count: number, phase: Phase, area: string) => void; onMore: (files: File[]) => void;
+  /** Open the mark-up screen on a photo that was just saved. */
+  onMark?: (photo: PatientPhoto) => void;
 }) {
   const { toast } = useStore();
   const [phase, setPhase] = useState<Phase>(defaultPhase);
-  const [area, setArea] = useState("");
-  const [other, setOther] = useState(false);
+  const [area, setArea] = useState(defaultArea);
+  const [other, setOther] = useState(!!defaultArea && !BODY_AREAS.includes(defaultArea));
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(0);
+  const [created, setCreated] = useState<PatientPhoto[]>([]);
   const previews = useMemo(() => files.map((f) => URL.createObjectURL(f)), [files]);
   useEffect(() => () => previews.forEach((u) => URL.revokeObjectURL(u)), [previews]);
 
@@ -93,10 +97,11 @@ function TagSheet({ files, userId, bookingId, defaultPhase, onClose, onSaved, on
     setBusy(true); setErr(null);
     try {
       const ready = await Promise.all(files.map((f) => downscale(f)));
-      await api.patientPhotos.upload(ready, { userId, bookingId: bookingId ?? null, phase, bodyArea: area.trim(), note: note.trim() });
+      const res = await api.patientPhotos.upload(ready, { userId, bookingId: bookingId ?? null, phase, bodyArea: area.trim(), note: note.trim() });
       toast(files.length === 1 ? "Photo saved" : `${files.length} photos saved`);
+      setCreated(res.data ?? []);
       setSaved(files.length);
-      onSaved(files.length, phase);
+      onSaved(files.length, phase, area.trim());
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
 
@@ -104,6 +109,18 @@ function TagSheet({ files, userId, bookingId, defaultPhase, onClose, onSaved, on
     return (
       <Sheet open onClose={onClose} title="Saved to the guest’s record" sub={`${saved} ${phaseLabel(phase).toLowerCase()} photo${saved === 1 ? "" : "s"}${area ? ` · ${area}` : ""}`}
         footer={<><span className="flex-1" /><Btn kind="secondary" onClick={onClose}>Done</Btn></>}>
+        {onMark && created[0] && (
+          <button type="button" className="dz-capture__mark" onClick={() => onMark(created[0])}>
+            <Pencil />
+            <span>
+              <b>Mark the changes</b>
+              <span>{created.length > 1
+                ? "Circle, box, point or draw on the first photo. Open the others from the record to mark them."
+                : "Circle, box, point or draw on the photo. A note on each mark is optional."}</span>
+            </span>
+            <ChevronRight />
+          </button>
+        )}
         <div className="dz-capture">
           <PhotoInput mode="camera" className="dz-capture__btn" onFiles={onMore}>
             <Camera /><b>Take another</b><span>Same stage and area</span>
@@ -172,6 +189,11 @@ export function PhotoGrid({ photos, onOpen, add }: { photos: PatientPhoto[]; onO
         <button key={p._id} type="button" className="dz-photo" onClick={() => onOpen(p)}>
           <img src={p.url} alt={`${phaseLabel(p.phase)} ${p.bodyArea ?? ""}`} loading="lazy" />
           <span className="dz-photo__tag"><span className={`dz-pill dz-pill--sm ${p.phase === "after" ? "dz-pill--gold" : "dz-pill--line"}`}>{phaseLabel(p.phase)}</span></span>
+          {markCount(p) > 0 && (
+            <span className="dz-photo__marks dz-pill dz-pill--sm dz-pill--dark" title={`${markCount(p)} mark${markCount(p) === 1 ? "" : "s"}`}>
+              <Pencil />{markCount(p)}
+            </span>
+          )}
           <span className="dz-photo__meta">{p.bodyArea || "Area not set"}<span>{fmtDate(p.takenAt)}</span></span>
         </button>
       ))}
@@ -181,14 +203,26 @@ export function PhotoGrid({ photos, onOpen, add }: { photos: PatientPhoto[]; onO
 
 /* ------------------------------------------------------------------ viewer */
 
-export function PhotoViewer({ photos, index, onIndex, onClose, onCompare, onDeleted, canDelete }: {
+export function PhotoViewer({ photos, index, onIndex, onClose, onCompare, onDeleted, canDelete, canMark, onChanged }: {
   photos: PatientPhoto[]; index: number; onIndex: (i: number) => void; onClose: () => void;
   onCompare?: (p: PatientPhoto) => void; onDeleted?: () => void; canDelete?: boolean;
+  /** Offer "Mark". Defaults to canDelete: both mean the record is open for changes. */
+  canMark?: boolean;
+  /** Told after marks are saved, so the list behind the viewer can refresh. */
+  onChanged?: (p: PatientPhoto) => void;
 }) {
   const { toast } = useStore();
   const [confirm, setConfirm] = useState(false);
-  const p = photos[index];
+  const [marking, setMarking] = useState(false);
+  const [showMarks, setShowMarks] = useState(true);
+  const [active, setActive] = useState<number | null>(null);
+  // Marks saved here show at once, before the list behind the viewer reloads.
+  const [fresh, setFresh] = useState<Record<string, Pick<PatientPhoto, "annotations" | "annotatedAt" | "annotatedByName">>>({});
+  const base = photos[index];
+  const p = base ? { ...base, ...(fresh[base._id] ?? {}) } : undefined;
+  const marks = p?.annotations ?? [];
   useEffect(() => {
+    if (marking) return;
     const h = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
       if (e.key === "ArrowLeft" && index > 0) onIndex(index - 1);
@@ -196,12 +230,23 @@ export function PhotoViewer({ photos, index, onIndex, onClose, onCompare, onDele
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [index, photos.length, onClose, onIndex]);
-  useEffect(() => setConfirm(false), [index]);
+  }, [index, photos.length, onClose, onIndex, marking]);
+  useEffect(() => { setConfirm(false); setActive(null); }, [index]);
 
   // Swipe between photos with a finger.
   const startX = useRef<number | null>(null);
   if (!p) return null;
+  if (marking) {
+    return (
+      <PhotoMarker photo={p} onClose={() => setMarking(false)}
+        onSaved={(u) => {
+          setFresh((f) => ({ ...f, [p._id]: { annotations: u.annotations ?? [], annotatedAt: u.annotatedAt, annotatedByName: u.annotatedByName } }));
+          setShowMarks(true);
+          onChanged?.(u);
+        }} />
+    );
+  }
+  const pick = (i: number) => setActive((a) => (a === i ? null : i));
   return (
     <div className="dz-viewer" role="dialog" aria-label="Photo">
       <div className="dz-viewer__bar">
@@ -211,6 +256,17 @@ export function PhotoViewer({ photos, index, onIndex, onClose, onCompare, onDele
           <span>{fmtDateLong(p.takenAt)}{p.takenByName ? ` · ${p.takenByName}` : ""}{p.note ? ` · ${p.note}` : ""}</span>
         </div>
         <span className="text-[13px] text-photo-ink">{index + 1} / {photos.length}</span>
+        {marks.length > 0 && (
+          <button type="button" className="dz-iconbtn" onClick={() => setShowMarks((s) => !s)} aria-pressed={showMarks}
+            aria-label={showMarks ? "Hide marks" : "Show marks"} title={showMarks ? "Hide marks" : "Show marks"}>
+            {showMarks ? <Eye /> : <EyeOff />}
+          </button>
+        )}
+        {(canMark ?? canDelete) && (
+          <button type="button" className="dz-btn dz-btn--secondary dz-btn--sm" onClick={() => setMarking(true)}>
+            <Pencil /> {marks.length ? "Edit marks" : "Mark"}
+          </button>
+        )}
         {onCompare && photos.length > 1 && (
           <button type="button" className="dz-btn dz-btn--gold dz-btn--sm" onClick={() => onCompare(p)}><Columns2 /> Compare</button>
         )}
@@ -232,11 +288,15 @@ export function PhotoViewer({ photos, index, onIndex, onClose, onCompare, onDele
           if (dx > 60 && index > 0) onIndex(index - 1);
           if (dx < -60 && index < photos.length - 1) onIndex(index + 1);
         }}>
-        <img src={p.url} alt="" draggable={false} />
+        <div className="dz-marked">
+          <img src={p.url} alt="" draggable={false} />
+          {showMarks && <MarkLayer photo={p} active={active} onPick={pick} />}
+        </div>
         {index > 0 && <button type="button" className="dz-iconbtn dz-viewer__prev" onClick={() => onIndex(index - 1)} aria-label="Previous photo"><ChevronLeft /></button>}
         {index < photos.length - 1 && <button type="button" className="dz-iconbtn dz-viewer__next" onClick={() => onIndex(index + 1)} aria-label="Next photo"><ChevronRight /></button>}
       </div>
-      <div className="dz-viewer__bar" style={{ justifyContent: "center" }}>
+      <div className="dz-viewer__bar dz-viewer__foot">
+        {showMarks && marks.length > 0 && <MarkNotes dark marks={marks} active={active} onPick={pick} />}
         <div className="dz-strip" style={{ maxWidth: "100%" }}>
           {photos.map((x, i) => (
             <button key={x._id} type="button" className={i === index ? "is-on" : ""} onClick={() => onIndex(i)} aria-label={`Photo ${i + 1}`}>
@@ -281,6 +341,7 @@ export function PhotoCompare({ photos, open, onClose, right: rightInit }: {
   const [leftId, setLeftId] = useState<Id | undefined>(firstBefore?._id);
   const [rightId, setRightId] = useState<Id | undefined>(rightInit ?? lastLater?._id);
   const [mode, setMode] = useState<"slider" | "side">("slider");
+  const [showMarks, setShowMarks] = useState(true);
   const [x, setX] = useState(50);
   const box = useRef<HTMLDivElement | null>(null);
 
@@ -311,14 +372,26 @@ export function PhotoCompare({ photos, open, onClose, right: rightInit }: {
               { key: "side", label: "Side by side", icon: <Columns2 /> },
             ]} />
             {left && right && left._id === right._id && <span className="dz-pill dz-pill--warn">Same photo on both sides</span>}
+            <span className="dz-spacer" />
+            {left && right && markCount(left) + markCount(right) > 0 && (
+              <button type="button" className={`dz-chip ${showMarks ? "is-on" : ""}`} aria-pressed={showMarks} onClick={() => setShowMarks((s) => !s)}>
+                {showMarks ? <Eye /> : <EyeOff />}Marks
+              </button>
+            )}
           </div>
 
           {left && right && (mode === "slider" ? (
             <div ref={box} className="dz-compare" style={{ ["--x" as string]: `${x}%` }}
               onPointerDown={(e) => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); move(e.clientX); }}
               onPointerMove={(e) => { if (e.buttons === 1 || e.pointerType === "touch") move(e.clientX); }}>
-              <img src={left.url} alt={photoLabel(left)} />
-              <img src={right.url} alt={photoLabel(right)} className="dz-compare__after" />
+              <div className="dz-compare__layer">
+                <img src={left.url} alt={photoLabel(left)} />
+                {showMarks && <MarkLayer photo={left} />}
+              </div>
+              <div className="dz-compare__layer dz-compare__after">
+                <img src={right.url} alt={photoLabel(right)} />
+                {showMarks && <MarkLayer photo={right} />}
+              </div>
               <div className="dz-compare__line"><span className="dz-compare__knob"><ArrowLeftRight /></span></div>
               <span className="dz-compare__label" style={{ left: 12 }}>{photoLabel(left)}</span>
               <span className="dz-compare__label" style={{ right: 12 }}>{photoLabel(right)}</span>
@@ -327,12 +400,27 @@ export function PhotoCompare({ photos, open, onClose, right: rightInit }: {
             <div className="dz-grid-even">
               {[left, right].map((p, i) => (
                 <figure key={`${p._id}-${i}`} className="m-0">
-                  <div className="dz-compare" style={{ cursor: "default", maxWidth: "none" }}><img src={p.url} alt={photoLabel(p)} /></div>
+                  <div className="dz-compare" style={{ cursor: "default", maxWidth: "none" }}>
+                    <img src={p.url} alt={photoLabel(p)} />
+                    {showMarks && <MarkLayer photo={p} />}
+                  </div>
                   <figcaption className="mt-2 text-center text-[13.5px] font-bold text-ink2">{photoLabel(p)}</figcaption>
+                  {showMarks && markCount(p) > 0 && <div className="mt-2"><MarkNotes marks={p.annotations ?? []} /></div>}
                 </figure>
               ))}
             </div>
           ))}
+
+          {left && right && mode === "slider" && showMarks && markCount(left) + markCount(right) > 0 && (
+            <div className="dz-grid-even">
+              {[left, right].map((p, i) => (
+                <div key={`${p._id}-notes-${i}`} className="dz-field">
+                  <span className="dz-label">{i === 0 ? "Marks on the left photo" : "Marks on the right photo"}</span>
+                  {markCount(p) > 0 ? <MarkNotes marks={p.annotations ?? []} /> : <span className="dz-hint">No marks on this photo.</span>}
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="dz-grid-even">
             <Picker title="Left — usually the before" photos={ordered} value={left?._id} onChange={setLeftId} />
@@ -364,12 +452,16 @@ export function PhotoStudio({ userId, bookingId, locked, compact, onChanged }: {
   const [filter, setFilter] = useState<"all" | Phase>("all");
   const [viewer, setViewer] = useState<{ list: PatientPhoto[]; index: number } | null>(null);
   const [compare, setCompare] = useState<{ right?: Id } | null>(null);
+  const [marking, setMarking] = useState<PatientPhoto | null>(null);
   const [lastPhase, setLastPhase] = useState<Phase>("before");
+  const [lastArea, setLastArea] = useState("");
 
   const all = useMemo(
     () => [...(q.data ?? [])].sort((a, b) => new Date(b.takenAt).getTime() - new Date(a.takenAt).getTime()),
     [q.data],
   );
+  // The viewer keeps the list it opened with; read each photo fresh so saved marks show after a reload.
+  const byId = useMemo(() => new Map(all.map((p) => [p._id, p])), [all]);
   const shown = filter === "all" ? all : all.filter((p) => p.phase === filter);
   const thisVisit = bookingId ? shown.filter((p) => idOf(p.bookingId) === bookingId) : [];
   const earlier = bookingId ? shown.filter((p) => idOf(p.bookingId) !== bookingId) : shown;
@@ -448,17 +540,20 @@ export function PhotoStudio({ userId, bookingId, locked, compact, onChanged }: {
 
       {pending && (
         <TagSheet key={pending.map((f) => f.name + f.size).join("|")} files={pending} userId={userId} bookingId={bookingId}
-          defaultPhase={lastPhase}
+          defaultPhase={lastPhase} defaultArea={lastArea}
           onClose={() => setPending(null)}
-          onSaved={(_, phase) => { setLastPhase(phase); reload(); }}
-          onMore={(files) => setPending(files)} />
+          onSaved={(_, phase, area) => { setLastPhase(phase); setLastArea(area); reload(); }}
+          onMore={(files) => setPending(files)}
+          onMark={canAdd ? (photo) => { setPending(null); setMarking(photo); } : undefined} />
       )}
       {viewer && (
-        <PhotoViewer photos={viewer.list} index={Math.max(0, viewer.index)} onIndex={(i) => setViewer({ ...viewer, index: i })}
-          onClose={() => setViewer(null)} canDelete={!locked}
+        <PhotoViewer photos={viewer.list.map((x) => byId.get(x._id) ?? x)} index={Math.max(0, viewer.index)} onIndex={(i) => setViewer({ ...viewer, index: i })}
+          onClose={() => setViewer(null)} canDelete={!locked} canMark={!locked}
+          onChanged={reload}
           onDeleted={() => { setViewer(null); reload(); }}
           onCompare={(p) => { setViewer(null); setCompare({ right: p._id }); }} />
       )}
+      {marking && <PhotoMarker photo={marking} onClose={() => setMarking(null)} onSaved={reload} />}
       <PhotoCompare photos={all} open={!!compare} right={compare?.right} onClose={() => setCompare(null)} />
     </div>
   );

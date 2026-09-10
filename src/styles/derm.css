@@ -564,6 +564,81 @@
   .dz-boot { display: grid; place-items: center; min-height: 100dvh; background: var(--color-bg); }
   .dz-boot img { height: 52px; width: auto; }
 
+  /* ============================================================= photo marks */
+  /* A photo that fills its box (object-fit contain) with marks laid exactly over the image. */
+  .dz-marked { position: absolute; inset: 0 12px; }
+  .dz-marked > img { width: 100%; height: 100%; object-fit: contain; }
+  .dz-marks { position: absolute; inset: 0; pointer-events: none; }
+  .dz-marks__fit { position: absolute; }
+  .dz-marks__fit svg { position: absolute; inset: 0; overflow: visible; }
+  .dz-marks__pin { position: absolute; z-index: 1; width: 26px; height: 26px; margin: -13px 0 0 -13px; display: grid; place-items: center; padding: 0; border: 2px solid #fff; border-radius: 50%; background: var(--color-primary); color: #fff; font: inherit; font-size: 12.5px; font-weight: 800; line-height: 1; pointer-events: none; }
+  button.dz-marks__pin { pointer-events: auto; cursor: pointer; }
+  button.dz-marks__pin::after { content: ""; position: absolute; inset: -9px; border-radius: 50%; }
+  .dz-marks__pin.has-note { background: var(--color-gold); color: var(--color-primary); }
+  .dz-marks__pin.is-on { border-color: var(--color-gold); background: #fff; color: var(--color-primary); transform: scale(1.18); }
+  @media (pointer: coarse) { button.dz-marks__pin { width: 32px; height: 32px; margin: -16px 0 0 -16px; font-size: 14px; } }
+  .dz-compare__layer { position: absolute; inset: 0; }
+  .dz-photo__marks { position: absolute; top: 10px; right: 10px; gap: 4px; }
+  .dz-photo__marks svg { width: 12px; height: 12px; }
+
+  /* the numbered notes that go with the pins */
+  .dz-marknotes { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .dz-marknotes li { min-width: 0; max-width: 100%; }
+  .dz-marknotes button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; max-width: 100%; padding: 4px 14px 4px 4px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-ink); font: inherit; font-size: 13.5px; font-weight: 650; text-align: left; cursor: pointer; }
+  .dz-marknotes button:disabled { cursor: default; }
+  .dz-marknotes button.is-on { border-color: var(--color-gold); background: var(--color-gold-soft); }
+  .dz-marknotes span { color: inherit; font-size: inherit; }
+  .dz-marknotes .dz-marknotes__n { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border: 3px solid; border-radius: 50%; background: var(--color-primary); color: #fff; font-size: 12px; font-weight: 800; }
+  .dz-marknotes .dz-marknotes__empty { color: var(--color-ink3); font-weight: 600; }
+  .dz-marknotes--dark button { border-color: var(--color-viewer-line); background: var(--color-viewer-btn); color: #fff; }
+  .dz-marknotes--dark button.is-on { border-color: var(--color-gold); background: var(--color-side-2); }
+  .dz-marknotes--dark .dz-marknotes__empty { color: var(--color-photo-ink); }
+  .dz-viewer__foot { flex-direction: column; align-items: stretch; }
+  .dz-viewer__foot .dz-marknotes { justify-content: center; max-height: 100px; overflow-y: auto; }
+  .dz-viewer__foot .dz-strip { align-self: center; }
+
+  /* "Mark the changes" straight after saving a photo */
+  .dz-capture__mark { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 72px; margin-bottom: 12px; padding: 14px 16px; border: 1px solid var(--color-gold); border-radius: 16px; background: var(--color-gold-soft); color: var(--color-primary); font: inherit; text-align: left; cursor: pointer; }
+  .dz-capture__mark:hover { background: var(--color-gold); }
+  .dz-capture__mark > svg { width: 24px; height: 24px; flex: none; }
+  .dz-capture__mark > svg:last-child { width: 20px; height: 20px; margin-left: auto; }
+  .dz-capture__mark b { display: block; font-size: 15.5px; font-weight: 800; }
+  .dz-capture__mark span span { display: block; margin-top: 2px; font-size: 13.5px; color: var(--color-gold-ink); }
+
+  /* the mark-up screen */
+  .dz-marker__body { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-height: 0; }
+  .dz-marker__stage { position: relative; min-height: 0; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; cursor: crosshair; }
+  .dz-marker__canvas { position: absolute; inset: 8px 12px; transform-origin: 0 0; }
+  .dz-marker__canvas > img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; -webkit-user-drag: none; }
+  .dz-marker__zoom { position: absolute; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .dz-marker__err { position: absolute; top: 12px; left: 50%; max-width: calc(100% - 32px); padding: 10px 14px; border-radius: 12px; background: var(--color-err); color: #fff; font-size: 14px; font-weight: 700; transform: translateX(-50%); }
+  .dz-marker__side { width: 300px; overflow-y: auto; padding: 12px 16px; border-left: 1px solid var(--color-viewer-line); }
+  .dz-marker__sidehead { margin-bottom: 10px; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-photo-ink); }
+  .dz-marker__side .dz-marknotes { flex-direction: column; flex-wrap: nowrap; }
+  .dz-marker__side .dz-marknotes button { width: 100%; border-radius: 12px; }
+  .dz-marker__foot { display: grid; gap: 10px; padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--color-viewer-line); }
+  .dz-marker__callout { display: flex; align-items: center; gap: 10px; }
+  .dz-marker__calloutpin { position: static; flex: none; margin: 0; }
+  .dz-marker__kind { flex: none; font-size: 14px; font-weight: 750; color: var(--color-photo-ink); }
+  .dz-marker__note { flex: 1; min-width: 0; border-color: var(--color-viewer-line); background: var(--color-viewer-btn); color: #fff; }
+  .dz-marker__note::placeholder { color: var(--color-photo-ink); }
+  .dz-marker__tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 18px; }
+  .dz-marker__group { display: flex; align-items: center; gap: 6px; }
+  .dz-marker__tool { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 64px; min-height: 54px; padding: 4px 8px; border: 1px solid var(--color-viewer-line); border-radius: 12px; background: var(--color-viewer-btn); color: #fff; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; }
+  .dz-marker__tool svg { width: 20px; height: 20px; }
+  .dz-marker__tool.is-on { border-color: var(--color-gold); background: var(--color-gold); color: var(--color-primary); }
+  .dz-marker__swatch { width: 40px; height: 40px; padding: 0; border: 2px solid var(--color-viewer-line); border-radius: 50%; cursor: pointer; }
+  .dz-marker__swatch.is-on { border: 3px solid #fff; outline: 2px solid var(--color-gold); outline-offset: 2px; }
+  .dz-marker__width { width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border: 1px solid var(--color-viewer-line); border-radius: 12px; background: var(--color-viewer-btn); cursor: pointer; }
+  .dz-marker__width i { display: block; border-radius: 50%; background: #fff; }
+  .dz-marker__width.is-on { border-color: var(--color-gold); }
+  .dz-marker .dz-iconbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+  @media (max-width: 1000px) { .dz-marker__side { display: none; } }
+  @media (max-width: 640px) {
+    .dz-marker__tool { min-width: 48px; min-height: 48px; }
+    .dz-marker__tool span, .dz-marker__kind { display: none; }
+  }
+
   /* ================================================================= print */
   @media print {
     body * { visibility: hidden !important; }
