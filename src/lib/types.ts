@@ -1140,8 +1140,6 @@ export type Invoice = {
   status: "open" | "closed" | "void";
   source: "desk" | "app" | "zenoti";
   zenotiSource?: { invoiceNumber?: string | null; receiptNumber?: string | null };
-  /** Zenoti's own number for a mirrored bill — what the guest's Zenoti sales refer to. */
-  zenotiInvoiceNumber?: string | null;
   lines: InvoiceLine[];
   bookingIds?: Id[];
   issuedAt: string;

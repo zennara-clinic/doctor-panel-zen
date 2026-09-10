@@ -13,7 +13,7 @@ import api from "./lib/api";
 import { useApi, useBookingUpdates, useDebounced, usePoll } from "./lib/useApi";
 import { initials, isoDay } from "./lib/format";
 import type { Admin } from "./lib/types";
-import { API_BASE, ApiError } from "./lib/http";
+import { ApiError } from "./lib/http";
 import logo from "./assets/zennara-logo.png";
 
 type NavItem = { to: string; label: string; icon: ReactNode; tour: string; badge?: "waiting" };
@@ -93,21 +93,21 @@ function SearchOverlay() {
       <div className="dz-spotlight" role="dialog" aria-label="Search patients">
         <div className="dz-spotlight__bar">
           <Search />
-          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search guests booked with you — name or ID" />
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search a guest by name, phone or ID" />
           {results.loading && q.trim().length >= 2 && <Loader2 className="h-5 w-5 animate-spin text-ink3" />}
           <button type="button" className="dz-btn dz-btn--ghost dz-btn--sm" onClick={() => setSearchOpen(false)}>Close</button>
         </div>
         <div className="dz-spotlight__list">
-          {q.trim().length < 2 && <div className="px-3 py-8 text-center text-[14px] text-ink3">Type at least two letters. Only guests booked with you are searched.</div>}
+          {q.trim().length < 2 && <div className="px-3 py-8 text-center text-[14px] text-ink3">Type at least two letters.</div>}
           {q.trim().length >= 2 && !rows.length && !results.loading && (
-            <div className="px-3 py-8 text-center text-[14px] text-ink3">No guest booked with you matches “{q}”.</div>
+            <div className="px-3 py-8 text-center text-[14px] text-ink3">No guest matches “{q}”.</div>
           )}
           {rows.map((p) => (
             <button key={p._id} type="button" className="dz-prow" style={{ gridTemplateColumns: "44px minmax(0,1fr) 20px", minHeight: 64 }} onClick={() => go(p._id)}>
               <span className="dz-avatar dz-avatar--sage">{initials(p.fullName)}</span>
               <span className="min-w-0">
                 <span className="dz-prow__name">{p.fullName}</span>
-                <span className="dz-prow__sub">{[p.patientId, p.location].filter(Boolean).join(" · ")}</span>
+                <span className="dz-prow__sub">{[p.patientId, p.phone, p.location].filter(Boolean).join(" · ")}</span>
               </span>
               <ChevronRight />
             </button>
@@ -236,12 +236,12 @@ export function Shell({ children }: { children: ReactNode }) {
           <img src={logo} alt="Zennara" className="dz-top__logo" />
           {centre}
           <button type="button" data-tour="search" className="dz-search" onClick={() => setSearchOpen(true)}>
-            <Search /> Search your guests
+            <Search /> Search guests
             <kbd>⌘K</kbd>
           </button>
           <div className="dz-top__right">
             {layout !== "full" && (
-              <button type="button" className="dz-iconbtn" onClick={() => setSearchOpen(true)} aria-label="Search your guests"><Search /></button>
+              <button type="button" className="dz-iconbtn" onClick={() => setSearchOpen(true)} aria-label="Search guests"><Search /></button>
             )}
             <Menu align="right"
               button={<button type="button" className="dz-avatar" aria-label="Account" style={{ padding: 0, border: 0, cursor: "pointer" }}>{photo ? <img src={photo} alt="" /> : initials(name)}</button>}
@@ -263,14 +263,6 @@ export function Shell({ children }: { children: ReactNode }) {
 }
 
 /* ================= login ================= */
-/**
- * A sign-in that belongs to another panel is refused here — and the session the
- * server has just opened for it is ended too, rather than left live and unused.
- */
-function endRefusedSession(token: string) {
-  return fetch(`${API_BASE}/admin/auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => undefined);
-}
-
 function LoginFrame({ children }: { children: ReactNode }) {
   return (
     <div className="dz-login">
@@ -336,7 +328,7 @@ function LoginPage({ onSignedIn }: { onSignedIn: (token: string, admin: Admin, e
     setBusy(true); setError(null);
     try {
       const res = await api.auth.loginPassword(addr, password);
-      if (!panelAccepts(res.admin.role)) { void endRefusedSession(res.token); setError(wrongPanelMessage(res.admin.role)); setPassword(""); return; }
+      if (!panelAccepts(res.admin.role)) { setError(wrongPanelMessage(res.admin.role)); setPassword(""); return; }
       onSignedIn(res.token, res.admin, res.expiresAt);
     } catch (err) { fail(err); } finally { setBusy(false); }
   };
@@ -352,7 +344,7 @@ function LoginPage({ onSignedIn }: { onSignedIn: (token: string, admin: Admin, e
     setBusy(true); setError(null);
     try {
       const res = await api.auth.verifyOtp(addr, otp);
-      if (!panelAccepts(res.admin.role)) { void endRefusedSession(res.token); setError(wrongPanelMessage(res.admin.role)); setOtp(""); return; }
+      if (!panelAccepts(res.admin.role)) { setError(wrongPanelMessage(res.admin.role)); setOtp(""); return; }
       onSignedIn(res.token, res.admin, res.expiresAt);
     } catch (err) { fail(err); setOtp(""); } finally { setBusy(false); }
   };
