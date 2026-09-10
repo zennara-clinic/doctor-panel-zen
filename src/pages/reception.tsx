@@ -1,3 +1,5 @@
+import type { Slot } from "../lib/types";
+import { useMyDoctor } from "../lib/useMe";
 import { Check, CheckCircle2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -573,6 +575,7 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
   open: boolean; onClose: () => void; onBooked: () => void;
   presetUser?: Pick<User, "_id" | "fullName" | "phone" | "email"> | null;
 }) {
+  const me = useMyDoctor();
   const { toast, audit, branch, branches, branchId } = useStore();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -582,7 +585,8 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
   const [location, setLocation] = useState("");
   const [date, setDate] = useState(isoDay());
   const [time, setTime] = useState("");
-  const [confirmNow, setConfirmNow] = useState(true);
+  // Off by default: confirming writes the booking to Zenoti, which answers 503 while write-back is off.
+  const [confirmNow, setConfirmNow] = useState(false);
   const [notes, setNotes] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -601,21 +605,34 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
     setPhone(presetUser?.phone ?? "");
     setEmail(presetUser?.email?.endsWith("@zennara.local") ? "" : presetUser?.email ?? "");
     setLocation(branch && branch !== "All branches" ? branch : branches[0]?.name ?? "");
-    setDate(isoDay()); setTime(""); setNotes(""); setErr(null); setConfirmNow(true);
-  }, [open, presetUser?._id, branch, branches.length]);
+    setDate(isoDay()); setTime(""); setNotes(""); setErr(null); setConfirmNow(false);
+    // A dermatologist booking a follow-up books it with themselves unless they pick someone else.
+    setDoctorId(me.data?._id ?? "");
+  }, [open, presetUser?._id, branch, branches.length, me.data?._id]);
 
   useEffect(() => {
     if (!serviceId && refs.data?.services.length) setServiceId(refs.data.services[0]._id);
   }, [refs.data?.services.length]);
 
-  // Real bookable slots for the chosen centre and date.
+  /*
+   * Bookable times. With a dermatologist picked, their own diary decides
+   * (/dermatologists/:id/slots — the check the server makes on save, keyed on
+   * `time`); "Any available" falls back to the centre's opening slots.
+   */
   const slots = useApi(async () => {
     const b = branches.find((x) => x.name === location);
-    if (!b || !date) return [] as string[];
+    if (!b || !date) return [] as { value: string; label: string }[];
+    const doc = refs.data?.doctors.find((d) => d._id === doctorId);
+    if (doc) {
+      const res = await api.schedules.slots(doc.doctorId, date, b._id).catch(() => undefined);
+      return ((res as { slots?: Slot[] } | undefined)?.slots ?? [])
+        .filter((x) => !x.booked && !x.tooSoon)
+        .map((x) => ({ value: x.time, label: x.label || x.time }));
+    }
     const res = await api.branches.slots(b._id, date).catch(() => undefined);
     const raw = (res as { slots?: string[]; availableSlots?: string[] } | undefined);
-    return raw?.slots ?? raw?.availableSlots ?? [];
-  }, [location, date, branches.length]);
+    return (raw?.slots ?? raw?.availableSlots ?? []).map((x) => ({ value: x, label: x }));
+  }, [location, date, branches.length, doctorId, refs.data?.doctors.length]);
 
   const service = refs.data?.services.find((s) => s._id === serviceId);
   const doctor = refs.data?.doctors.find((d) => d._id === doctorId);
@@ -626,7 +643,9 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
   const submit = async () => {
     setErr(null);
     if (name.trim().length < 2) return setErr("Enter the guest's full name");
-    if (phone.replace(/\D/g, "").length < 10) return setErr("Enter a valid mobile number");
+    // A guest already on file: the server takes their contact from the record,
+    // which the dermatologist panel never receives.
+    if (!presetUser && phone.replace(/\D/g, "").length < 10) return setErr("Enter a valid mobile number");
     if (!serviceId) return setErr("Pick a service");
     if (!location) return setErr("Pick a centre");
     if (!time) return setErr("Pick a time slot");
@@ -636,15 +655,15 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
       await api.bookings.create({
         consultationId: serviceId,
         fullName: name.trim(),
-        mobileNumber: phone.trim(),
-        email: email.trim() || undefined,
+        mobileNumber: presetUser ? "" : phone.trim(),
+        email: presetUser ? undefined : email.trim() || undefined,
         preferredLocation: location,
         preferredDate: date,
         preferredTimeSlots: [time],
         specialistId: doctor?.doctorId,
         specialistName: doctor?.name,
         specialistTier: doctor?.tier,
-        amount: service?.price,
+        // No amount: the server prices the service for the centre. Prices stay out of the dermatologist panel.
         notes: notes.trim() || undefined,
         confirmNow,
         userId: presetUser?._id,
@@ -666,8 +685,10 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
         <>
           <div className="grid gap-3 md:grid-cols-2">
             <In label="Guest name" value={name} onChange={setName} placeholder="Full name" />
-            <In label="Mobile" value={phone} onChange={setPhone} placeholder="+91 …" />
-            <In label="Email (optional)" value={email} onChange={setEmail} placeholder="name@email.com" />
+            {!presetUser && <>
+              <In label="Mobile" value={phone} onChange={setPhone} placeholder="+91 …" />
+              <In label="Email (optional)" value={email} onChange={setEmail} placeholder="name@email.com" />
+            </>}
             <Sel label="Centre" value={location} onChange={setLocation}
               options={branches.map((b) => b.name)} />
             <div className="flex flex-col gap-1">
@@ -675,7 +696,7 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
               <select value={serviceId} onChange={(e) => setServiceId(e.target.value)}
                 className="rounded-lg border border-border bg-ivory px-2.5 py-2 text-[12.5px] outline-none focus:border-gold-dark">
                 {(refs.data?.services ?? []).map((s) => (
-                  <option key={s._id} value={s._id}>{s.name} — {fmtINR(s.price)}</option>
+                  <option key={s._id} value={s._id}>{s.name}</option>
                 ))}
               </select>
             </div>
@@ -698,14 +719,14 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
                 <select value={time} onChange={(e) => setTime(e.target.value)}
                   className="rounded-lg border border-border bg-ivory px-2.5 py-2 text-[12.5px] outline-none focus:border-gold-dark">
                   <option value="">Choose a slot…</option>
-                  {(slots.data ?? []).map((s) => <option key={s} value={s}>{s}</option>)}
+                  {(slots.data ?? []).map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
                 </select>
               ) : (
                 <input value={time} onChange={(e) => setTime(e.target.value)} placeholder="e.g. 15:30"
                   className="rounded-lg border border-border bg-ivory px-2.5 py-2 text-[12.5px] outline-none focus:border-gold-dark" />
               )}
               {!slots.loading && (slots.data ?? []).length === 0 && (
-                <div className="text-[10.5px] text-ink3">No published slots for this centre and date — type the time instead.</div>
+                <div className="text-[10.5px] text-ink3">{doctorId ? "No free times for this dermatologist on this date — try another date." : "No published slots for this centre and date — type the time instead."}</div>
               )}
             </div>
           </div>

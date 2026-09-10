@@ -4,9 +4,10 @@ import api from "./lib/api";
 import type { ZenotiMembership, ZenotiOrder, ZenotiPackage, ZenotiUserData } from "./lib/api";
 import { ApiError } from "./lib/http";
 import { useApi } from "./lib/useApi";
-import { Loading, Panel, Prog } from "./ui";
+import { Loading, Panel } from "./ui";
 import { fmtDate, idOf } from "./lib/format";
-import { membershipActive, pkgActive } from "./pages/zenoti";
+import { membershipActive } from "./pages/zenoti";
+import { buildPackageViews, PackageLine } from "./packages";
 
 /**
  * What this guest has bought — products, treatments paid for, packages and
@@ -32,7 +33,6 @@ import { membershipActive, pkgActive } from "./pages/zenoti";
 
 type Kind = "Service" | "Product" | "Package" | "Membership" | "Mixed";
 export type PurchaseRow = { key: string; at: string | null; kind: Kind; items: string; source: "Zenoti" | "App" | "Desk" };
-type PackageRow = { key: string; name: string; used: number; total: number; until: string | null; active: boolean };
 type MembershipView = { active: boolean; name: string; until?: string | null; number?: string | null };
 
 const norm = (v?: string | null) => String(v ?? "").trim().toLowerCase();
@@ -58,19 +58,25 @@ function buildPurchases(invoices: Invoice[], orders: ProductOrder[], zOrders: Ze
     zByNumber.set(norm(num), [...(zByNumber.get(norm(num)) ?? []), { name, kind }]);
   };
   zOrders.forEach((z) => addZ(z.invoiceNumber, `${z.name}${z.quantity && z.quantity > 1 ? ` ×${z.quantity}` : ""}`, "Product"));
-  zPkgs.forEach((k) => addZ((k as { invoiceNumber?: string | null }).invoiceNumber, k.name, "Package"));
-  zMems.forEach((m) => addZ((m as { invoiceNumber?: string | null }).invoiceNumber, m.name, "Membership"));
+  // Packages and memberships carry their bill as `invoice.number` (and receipt); product sales as `invoiceNumber`.
+  const billNos = (x: unknown) => {
+    const r = x as { invoice?: { number?: string | null; receiptNumber?: string | null } | null; invoiceNumber?: string | null };
+    return [r.invoice?.number, r.invoice?.receiptNumber, r.invoiceNumber];
+  };
+  zPkgs.forEach((k) => billNos(k).forEach((n) => addZ(n, k.name, "Package")));
+  zMems.forEach((m) => billNos(m).forEach((n) => addZ(n, m.name, "Membership")));
   const kindOf = (l: InvoiceLine): Kind =>
     l.kind === "product" ? "Product" : l.kind === "package" ? "Package" : l.kind === "membership" ? "Membership" : "Service";
 
   for (const i of invoices) {
     remember(i.invoiceNumber);
     remember(i.receiptNumber);
+    remember(i.zenotiInvoiceNumber);
     remember(i.zenotiSource?.invoiceNumber);
     remember(i.zenotiSource?.receiptNumber);
     if (i.status === "void") continue;
     const lines = i.lines ?? [];
-    const fromZenoti = lines.length ? [] : [i.invoiceNumber, i.receiptNumber, i.zenotiSource?.invoiceNumber, i.zenotiSource?.receiptNumber]
+    const fromZenoti = lines.length ? [] : [i.invoiceNumber, i.receiptNumber, i.zenotiInvoiceNumber, i.zenotiSource?.invoiceNumber, i.zenotiSource?.receiptNumber]
       .flatMap((n) => (n ? zByNumber.get(norm(n)) ?? [] : []));
     const kinds = new Set(lines.length ? lines.map(kindOf) : fromZenoti.map((z) => z.kind));
     const names = lines.length ? lines.map((l) => `${l.name}${l.qty > 1 ? ` ×${l.qty}` : ""}`) : [...new Set(fromZenoti.map((z) => z.name))];
@@ -117,35 +123,6 @@ function buildPurchases(invoices: Invoice[], orders: ProductOrder[], zOrders: Ze
   return { rows: rows.sort((a, b) => t(b.at) - t(a.at)), unnamedBills };
 }
 
-function buildPackages(assignments: PackageAssignment[], zPkgs: ZenotiPackage[]): PackageRow[] {
-  const now = Date.now();
-  const mirrored = new Set(assignments.map((a) => a.zenotiUserPackageId).filter(Boolean).map(String));
-  const rows: PackageRow[] = assignments.map((a) => {
-    const total = a.usageTracking?.totalSessions ?? (a.packageDetails?.services ?? []).reduce((n, s) => n + (Number(s.sessions) || 1), 0);
-    const used = a.usageTracking?.usedSessions ?? (a.sessions ?? []).filter((s) => s.status === "Completed").length;
-    return {
-      key: `pa:${a._id}`,
-      name: a.packageDetails?.packageName ?? "Package",
-      used, total,
-      until: a.validUntil ?? null,
-      active: a.status === "Active" && (!a.validUntil || new Date(a.validUntil).getTime() > now),
-    };
-  });
-  for (const k of zPkgs) {
-    if (k.id && mirrored.has(String(k.id))) continue;
-    const total = k.sessionsTotal ?? 0;
-    rows.push({
-      key: `zp:${k.id ?? k.name}`,
-      name: k.name ?? "Package",
-      used: Math.max(0, total - (k.sessionsRemaining ?? 0)),
-      total,
-      until: k.neverExpires ? null : k.endDate ?? null,
-      active: pkgActive(k),
-    });
-  }
-  return rows.sort((a, b) => Number(b.active) - Number(a.active));
-}
-
 function membershipView(assignments: MembershipAssignment[], zMems: ZenotiMembership[], patient?: User | null): MembershipView | null {
   const now = Date.now();
   const nameOf = (m: MembershipAssignment) => m.snapshot?.name || (typeof m.membershipId === "object" ? m.membershipId?.name : null) || "Zen Membership";
@@ -180,7 +157,7 @@ export function useGuestPurchases(userId: Id | "" | null | undefined) {
     const zd = zenoti?.details;
     return {
       ...(() => { const b = buildPurchases(invoices, orders, zd?.orders ?? [], zd?.packages ?? [], zd?.memberships ?? []); return { purchases: b.rows, unnamedBills: b.unnamedBills }; })(),
-      packages: buildPackages(assignments, zd?.packages ?? []),
+      packages: buildPackageViews(assignments, zd?.packages ?? []),
       memberships,
       zMems: zd?.memberships ?? [],
       failed: settled.filter((s) => s.status === "rejected").length,
@@ -190,18 +167,21 @@ export function useGuestPurchases(userId: Id | "" | null | undefined) {
 
 const KIND_TONE: Record<Kind, string> = { Service: "", Product: "dz-pill--info", Package: "dz-pill--line", Membership: "dz-pill--ok", Mixed: "dz-pill--line" };
 
-export default function GuestPurchases({ userId, patient, compact }: {
+export default function GuestPurchases({ userId, patient, compact, hidePackages }: {
   userId: Id | "" | null | undefined;
   patient?: User | null;
   /** Sidebar version: fewer rows. */
   compact?: boolean;
+  /** The page already shows packages in their own panel — don't list them twice. */
+  hidePackages?: boolean;
 }) {
   const q = useGuestPurchases(userId);
   const d = q.data;
   const membership = d ? membershipView(d.memberships, d.zMems, patient) : null;
-  const activePkgs = d?.packages.filter((p) => p.active) ?? [];
-  const finishedPkgs = (d?.packages.length ?? 0) - activePkgs.length;
-  const nothing = !!d && d.purchases.length === 0 && d.unnamedBills === 0 && d.packages.length === 0 && !membership;
+  const pkgs = hidePackages ? [] : d?.packages ?? [];
+  const activePkgs = pkgs.filter((p) => p.active);
+  const finishedPkgs = pkgs.length - activePkgs.length;
+  const nothing = !!d && d.purchases.length === 0 && d.unnamedBills === 0 && pkgs.length === 0 && !membership;
   const limit = compact ? 4 : 25;
 
   return (
@@ -229,16 +209,7 @@ export default function GuestPurchases({ userId, patient, compact }: {
           {activePkgs.length > 0 && (
             <div>
               <div className="mb-1 flex items-center gap-1.5 text-[13px] font-extrabold text-ink2"><PackageIcon className="h-4 w-4" />Packages</div>
-              {activePkgs.slice(0, limit).map((p) => (
-                <div key={p.key} className="grid gap-1.5 border-b border-border py-2.5 last:border-0">
-                  <div className="flex items-center justify-between gap-3 text-[14px]">
-                    <b className="min-w-0 truncate">{p.name}</b>
-                    <span className="shrink-0 text-[13px] text-ink2">{p.total ? `${Math.max(0, p.total - p.used)} of ${p.total} left` : "Active"}</span>
-                  </div>
-                  {p.total > 0 && <Prog pct={(p.used / p.total) * 100} w="w-full" />}
-                  {p.until && <span className="text-[12.5px] text-ink3">Valid until {fmtDate(p.until)}</span>}
-                </div>
-              ))}
+              {activePkgs.slice(0, limit).map((p) => <PackageLine key={p.key} v={p} />)}
             </div>
           )}
           {finishedPkgs > 0 && <div className="text-[13px] text-ink3">{finishedPkgs} earlier package{finishedPkgs === 1 ? "" : "s"}, used up or expired.</div>}

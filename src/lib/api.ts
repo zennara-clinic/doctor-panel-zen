@@ -663,6 +663,9 @@ export const consultationNotes = {
   forBooking: (bookingId: Id) => request<ConsultationNote | null>(`/consultation-notes/booking/${bookingId}`),
   save: (body: Partial<ConsultationNote> & { bookingId: Id }) =>
     request<ConsultationNote>("/consultation-notes", { method: "POST", body }),
+  /** The same save with its envelope: `prescriptionEmailed` says whether this sign sent the email. */
+  saveWithResult: (body: Partial<ConsultationNote> & { bookingId: Id }) =>
+    requestRaw<ConsultationNote>("/consultation-notes", { method: "POST", body }) as Promise<Envelope<ConsultationNote> & { prescriptionEmailed?: boolean; message?: string }>,
   /** Email the signed prescription to the guest (first send or resend). */
   send: (id: Id) => requestRaw(`/consultation-notes/${id}/send`, { method: "POST", body: {} }),
   remove: (id: Id) => requestRaw(`/consultation-notes/${id}`, { method: "DELETE" }),

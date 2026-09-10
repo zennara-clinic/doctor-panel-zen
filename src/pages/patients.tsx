@@ -5,17 +5,18 @@ import {
   Search, ShieldCheck, Sparkles, Stethoscope, Users,
 } from "lucide-react";
 import api from "../lib/api";
-import type { MyPatient, ZenotiAppointment, ZenotiMembership, ZenotiPackage } from "../lib/api";
+import type { MyPatient, ZenotiAppointment, ZenotiMembership } from "../lib/api";
 import { useApi, useDebounced } from "../lib/useApi";
 import { useMyDoctor } from "../lib/useMe";
 import { useStore } from "../store";
-import { Area, Async, Btn, Empty, Modal, Panel, Prog, Segmented } from "../ui";
+import { Area, Async, Btn, Empty, Modal, Panel, Segmented } from "../ui";
 import { NoProfile, VisitRow, isOpenVisit, visitTime } from "../visit";
 import { PhotoGrid, PhotoStudio } from "../photos";
 import { PreConsultModal } from "../preconsult";
 import GuestPurchases from "../purchases";
+import { PackageCard, PackageLine as PackageSummary, PackagesFreshness, useGuestPackages } from "../packages";
 import { NewBookingModal } from "./reception";
-import { appointmentState, fmtZDate, fmtZWhen, membershipActive, pkgActive } from "./zenoti";
+import { appointmentState, fmtZDate, fmtZWhen, membershipActive } from "./zenoti";
 import {
   ageFrom, bookingServiceName, fmtDate, fmtDateLong, fmtWhen, idOf, initials, isoDay,
 } from "../lib/format";
@@ -76,7 +77,7 @@ export function MyPatients() {
           <h1 className="dz-title">Patients</h1>
         </div>
         <div className="dz-head__actions">
-          <Btn kind="secondary" onClick={() => setSearchOpen(true)}><Search />Find any guest</Btn>
+          <Btn kind="secondary" title="Searches guests booked with you" onClick={() => setSearchOpen(true)}><Search />Find a guest</Btn>
         </div>
       </header>
 
@@ -206,29 +207,33 @@ export function PatientRecord() {
 
   const q = useApi(async () => {
     if (!id) throw new Error("No guest selected — open one from Patients.");
+    // A part that fails to load is named, never shown as an empty list — a real
+    // guest must not read "no notes" because a request failed.
+    const failed: string[] = [];
+    const missing = (what: string) => () => { failed.push(what); return [] as never[]; };
     const [user, bookings, assignments, forms, consents, notes, photos] = await Promise.all([
       api.patients.get(id),
       api.bookings.list({ userId: id }).then((r) => (r.data ?? []).filter((b) => idOf(b.userId) === id)),
-      api.packageAssignments.list({ userId: id, limit: 100 }).then((r) => (r.data ?? []).filter((a) => idOf(a.userId) === id)).catch(() => []),
-      api.preConsult.list({ userId: id, limit: 100 }).then((r) => (r.data ?? []).filter((f) => idOf(f.userId) === id)).catch(() => []),
-      api.consentForms.list({ userId: id, limit: 100 }).then((r) => (r.data ?? []).filter((c) => idOf(c.userId) === id)).catch(() => []),
-      api.consultationNotes.list({ userId: id, limit: 200 }).then((r) => (r.data ?? []).filter((n) => idOf(n.userId) === id)).catch(() => []),
-      api.patientPhotos.list({ userId: id, limit: 8 }).then((r) => r.data ?? []).catch(() => []),
+      api.packageAssignments.list({ userId: id, limit: 100 }).then((r) => (r.data ?? []).filter((a) => idOf(a.userId) === id)).catch(missing("packages")),
+      api.preConsult.list({ userId: id, limit: 100 }).then((r) => (r.data ?? []).filter((f) => idOf(f.userId) === id)).catch(missing("pre-consult forms")),
+      api.consentForms.list({ userId: id, limit: 100 }).then((r) => (r.data ?? []).filter((c) => idOf(c.userId) === id)).catch(missing("consent forms")),
+      api.consultationNotes.list({ userId: id, limit: 200 }).then((r) => (r.data ?? []).filter((n) => idOf(n.userId) === id)).catch(missing("consultation notes")),
+      api.patientPhotos.list({ userId: id, limit: 8 }).then((r) => r.data ?? []).catch(missing("photos")),
     ]);
-    return { user, bookings, assignments, forms, consents, notes, photos };
+    return { user, bookings, assignments, forms, consents, notes, photos, failed };
   }, [id]);
   const clinic = useApi(() => (id ? api.zenoti.user(id).catch(() => null) : Promise.resolve(null)), [id]);
+  // Packages read live: a pull from Zenoti when the copy is stale, and every few
+  // minutes while the Packages tab is open.
+  const pk = useGuestPackages(id, { watch: tab === "packages", onLive: clinic.reload });
 
   return (
     <Async q={q} label="Loading the patient record…" rows={6}>
-      {({ user: p, bookings, assignments, forms, consents, notes, photos }) => {
+      {({ user: p, bookings, assignments, forms, consents, notes, photos, failed }) => {
         const age = ageFrom(p.dateOfBirth);
         const zd = clinic.data?.details ?? null;
         const knownZenotiIds = new Set(bookings.map((b) => b.zenotiAppointmentId).filter(Boolean));
         const zAppts = (zd?.appointments ?? []).filter((a) => !a.id || !knownZenotiIds.has(a.id));
-        // A package mirrored into PackageAssignment also sits in the raw Zenoti copy; list it once.
-        const mirroredPkgIds = new Set(assignments.map((a) => a.zenotiUserPackageId).filter(Boolean).map(String));
-        const zPkgs = (zd?.packages ?? []).filter((k) => !k.id || !mirroredPkgIds.has(String(k.id)));
         const zMems = zd?.memberships ?? [];
         const zNotes = zd?.notes ?? [];
         const zForms = zd?.forms ?? [];
@@ -240,8 +245,6 @@ export function PatientRecord() {
         const upcoming = [...bookings].filter((b) => isOpenVisit(b) && isoDay(new Date(b.confirmedDate || b.preferredDate)) >= isoDay())
           .sort((a, b) => new Date(a.confirmedDate || a.preferredDate).getTime() - new Date(b.confirmedDate || b.preferredDate).getTime());
         const todayOpen = upcoming.find((b) => isoDay(new Date(b.confirmedDate || b.preferredDate)) === isoDay());
-        const activeAssignments = assignments.filter((a) => a.status === "Active");
-        const activeZPkgs = zPkgs.filter(pkgActive);
 
         const drug = p.drugAllergies?.trim() || (latestForm?.drugAllergies && !/^none/i.test(latestForm.drugAllergies) ? latestForm.drugAllergies : "") || (p.hasDrugAllergy ? "Drug allergy — details not recorded" : "");
         const pregnancy = latestForm?.pregnancyStatus && ["pregnant", "breastfeeding", "planning"].includes(latestForm.pregnancyStatus) ? latestForm.pregnancyStatus : null;
@@ -257,7 +260,7 @@ export function PatientRecord() {
                   <div className="min-w-0">
                     <h1 className="dz-title">{p.fullName}</h1>
                     <div className="dz-sub">
-                      {[age ? `${age} yrs` : null, p.gender, p.patientId ? `ID ${p.patientId}` : null, p.phone, p.memberType === "Zen Member" ? "Zen Member" : null].filter(Boolean).join(" · ")}
+                      {[age ? `${age} yrs` : null, p.gender, p.patientId ? `ID ${p.patientId}` : null, p.memberType === "Zen Member" ? "Zen Member" : null].filter(Boolean).join(" · ")}
                     </div>
                   </div>
                 </div>
@@ -276,13 +279,19 @@ export function PatientRecord() {
               </div>
             </header>
 
+            {failed.length > 0 && (
+              <div className="dz-note dz-note--warn mb-4"><AlertTriangle />
+                <span className="flex-1">Couldn’t load this guest’s {failed.join(", ")}. What shows below may be incomplete.</span>
+                <button type="button" className="dz-btn dz-btn--secondary dz-btn--sm" onClick={q.reload}>Retry</button>
+              </div>
+            )}
             <div className="mb-5 max-w-full">
               <Segmented value={tab} onChange={setTab} options={[
                 { key: "overview", label: "Overview" },
                 { key: "consultations", label: "Consultations", count: notes.length + zNotes.length },
                 { key: "photos", label: "Photos" },
                 { key: "forms", label: "Forms", count: forms.length + consents.length + zForms.length },
-                { key: "packages", label: "Packages", count: assignments.length + zPkgs.length + zMems.length },
+                { key: "packages", label: "Packages", count: (pk.views?.length ?? assignments.length) + zMems.length },
                 { key: "visits", label: "Visits", count: bookings.length + zAppts.length },
               ]} />
             </div>
@@ -329,21 +338,18 @@ export function PatientRecord() {
                     )}
                   </Panel>
 
-                  <Panel icon={<Package />} title="Active packages" sub={activeAssignments.length + activeZPkgs.length ? undefined : "None active"}>
-                    {activeAssignments.length + activeZPkgs.length === 0 ? <div className="dz-hint">Packages are sold and assigned at the desk.</div> : (
-                      <div className="dz-stack--sm">
-                        {activeAssignments.map((a) => {
-                          const used = a.usageTracking?.usedSessions ?? 0;
-                          const total = a.usageTracking?.totalSessions ?? 0;
-                          return <PackageLine key={a._id} name={a.packageDetails?.packageName ?? "Package"} used={used} total={total} until={a.validUntil} />;
-                        })}
-                        {activeZPkgs.map((k, i) => (
-                          <PackageLine key={k.id ?? i} name={k.name ?? "Package"} used={Math.max(0, (k.sessionsTotal ?? 0) - (k.sessionsRemaining ?? 0))}
-                            total={k.sessionsTotal ?? 0} until={k.neverExpires ? null : k.endDate} clinic />
-                        ))}
-                      </div>
-                    )}
-                  </Panel>
+                  {(() => {
+                    const active = (pk.views ?? []).filter((v) => v.active);
+                    return (
+                      <Panel icon={<Package />} title="Active packages"
+                        sub={pk.views && !active.length ? "None active" : undefined}
+                        right={pk.views?.length ? <button type="button" className="dz-link" onClick={() => setTab("packages")}>All<ChevronRight /></button> : undefined}>
+                        {!pk.views ? <div className="dz-hint">Loading packages…</div>
+                          : active.length === 0 ? <div className="dz-hint">{pk.views.length ? "Earlier packages are used up or expired — see Packages." : "Packages are sold and assigned at the desk."}</div>
+                          : <div>{active.map((v) => <PackageSummary key={v.key} v={v} />)}</div>}
+                      </Panel>
+                    );
+                  })()}
 
                   <Panel icon={<Images />} title="Recent photos" right={<button type="button" className="dz-link" onClick={() => setTab("photos")}>All photos<ChevronRight /></button>}>
                     {photos.length === 0 ? <div className="dz-hint">No photos yet.</div> : (
@@ -351,14 +357,17 @@ export function PatientRecord() {
                     )}
                   </Panel>
 
-                  <GuestPurchases userId={id} patient={p} />
+                  <GuestPurchases userId={id} patient={p} hidePackages />
                 </div>
               </div>
             )}
 
             {tab === "consultations" && (
               <div className="dz-stack">
-                {sortedNotes.length === 0 && zNotes.length === 0 && (
+                {sortedNotes.length === 0 && zNotes.length === 0 && failed.includes("consultation notes") && (
+                  <div className="dz-note dz-note--warn"><AlertTriangle /><span>Couldn’t load this guest’s consultation notes.</span></div>
+                )}
+                {sortedNotes.length === 0 && zNotes.length === 0 && !failed.includes("consultation notes") && (
                   <Empty icon={<FileText />} title="No notes written yet"
                     hint={`${bookings.filter((b) => b.status === "Completed").length} completed visits are listed under Visits. A note appears here once one is written in this panel or in Zenoti.`} />
                 )}
@@ -444,36 +453,17 @@ export function PatientRecord() {
 
             {tab === "packages" && (
               <div className="dz-stack">
-                {assignments.length + zPkgs.length + zMems.length === 0 && (
-                  <Empty icon={<Package />} title="No packages or memberships" hint="Packages are sold and assigned at the desk." />
-                )}
-                {assignments.length > 0 && (
+                <PackagesFreshness linked={pk.linked} syncedAt={pk.syncedAt} pulling={pk.pulling} pullFailed={pk.pullFailed} onPull={() => void pk.pull()} />
+                {pk.q.initial && !pk.views ? <div className="dz-hint">Loading packages…</div>
+                  : pk.q.error && !pk.views ? <div className="dz-note dz-note--warn"><AlertTriangle /><span>Couldn’t load this guest’s packages.</span></div>
+                  : (pk.views?.length ?? 0) + zMems.length === 0 ? (
+                    <Empty icon={<Package />} title="No packages or memberships" hint="Packages are sold and assigned at the desk." />
+                  ) : null}
+                {pk.partial && <div className="dz-hint">Part of the package history couldn’t load — tap Refresh.</div>}
+                {!!pk.views?.length && (
                   <div className="dz-grid-even">
-                    {assignments.map((a) => {
-                      const used = a.usageTracking?.usedSessions ?? 0;
-                      const total = a.usageTracking?.totalSessions ?? 0;
-                      return (
-                        <Panel key={a._id} icon={<Package />} title={a.packageDetails?.packageName ?? "Package"}
-                          sub={a.validUntil ? `Valid until ${fmtDate(a.validUntil)}` : undefined}
-                          right={<span className={`dz-pill dz-pill--sm ${a.status === "Active" ? "dz-pill--ok" : a.status === "Cancelled" ? "dz-pill--err" : "dz-pill--off"}`}>{a.status}</span>}>
-                          <div className="dz-stack--sm">
-                            <div className="dz-row"><Prog pct={total ? (used / total) * 100 : 0} w="flex-1" /><b className="text-[14px]">{used} of {total} used</b></div>
-                            {(a.sessions ?? []).map((s, i) => (
-                              <div key={s._id ?? i} className="flex items-center justify-between gap-3 border-b border-border py-2 text-[14px] last:border-0">
-                                <span className="min-w-0 truncate">{s.serviceName || "Treatment"}{s.specialistName ? <span className="text-ink3"> · {s.specialistName}</span> : null}</span>
-                                <span className="shrink-0 text-ink2">{s.scheduledDate ? fmtDate(s.scheduledDate) : "—"}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </Panel>
-                      );
-                    })}
+                    {pk.views.map((v) => <PackageCard key={v.key} v={v} />)}
                   </div>
-                )}
-                {zPkgs.length > 0 && (
-                  <Panel icon={<Package />} title="Clinic packages from Zenoti" sub={`${zPkgs.length} on the clinic system`}>
-                    <div className="dz-stack--sm">{zPkgs.map((k, i) => <ClinicPackage key={k.id ?? i} k={k} />)}</div>
-                  </Panel>
                 )}
                 {zMems.length > 0 && (
                   <Panel icon={<Sparkles />} title="Memberships">
@@ -520,41 +510,6 @@ function FactPair({ k, v }: { k: string; v: ReactNode }) {
   return <><dt>{k}</dt><dd>{v}</dd></>;
 }
 
-function PackageLine({ name, used, total, until, clinic }: { name: string; used: number; total: number; until?: string | null; clinic?: boolean }) {
-  return (
-    <div className="grid gap-1.5 border-b border-border pb-3 last:border-0 last:pb-0">
-      <div className="flex items-center justify-between gap-3 text-[14px]">
-        <b className="min-w-0 truncate">{name}</b>
-        {clinic && <span className="dz-pill dz-pill--sm dz-pill--info">Clinic</span>}
-      </div>
-      <div className="dz-row" style={{ gap: 10 }}>
-        <Prog pct={total ? (used / total) * 100 : 0} w="flex-1" />
-        <span className="shrink-0 text-[13px] text-ink2">{Math.max(0, total - used)} of {total} left{until ? ` · until ${fmtDate(until)}` : ""}</span>
-      </div>
-    </div>
-  );
-}
-
-/** A Zenoti package without its price — the consult room never shows money. */
-function ClinicPackage({ k }: { k: ZenotiPackage }) {
-  const total = k.sessionsTotal ?? 0;
-  const left = k.sessionsRemaining ?? 0;
-  const active = pkgActive(k);
-  return (
-    <div className="dz-result" style={{ cursor: "default", alignItems: "flex-start" }}>
-      <span className="dz-result__txt">
-        <b>{k.name ?? "Package"}</b>
-        <small>Bought {fmtZDate(k.purchaseDate || k.startDate)} · {k.neverExpires ? "never expires" : `expires ${fmtZDate(k.endDate)}`}{k.centerName ? ` · ${k.centerName}` : ""}</small>
-        {!!k.services?.length && <small>{k.services.map((s) => `${s.name ?? "Service"} ${s.balance ?? 0}/${s.total ?? 0}`).join(" · ")}</small>}
-      </span>
-      <span className="dz-result__side">
-        <span className="text-[13px] font-bold text-ink2">{left} of {total} left</span>
-        <span className={`dz-pill dz-pill--sm ${active ? "dz-pill--ok" : "dz-pill--off"}`}>{active ? "Active" : "Inactive"}</span>
-      </span>
-    </div>
-  );
-}
-
 function ClinicMembership({ m }: { m: ZenotiMembership }) {
   const active = membershipActive(m);
   return (
@@ -599,7 +554,8 @@ function EditClinical({ open, onClose, user, onSaved }: { open: boolean; onClose
         <Btn disabled={busy} onClick={async () => {
           setBusy(true); setErr(null);
           try {
-            await api.patients.update(user._id, { drugAllergies: drug, medicalHistory: history });
+            // The flag follows the text, so clearing the allergy clears the red alert too.
+            await api.patients.update(user._id, { drugAllergies: drug, hasDrugAllergy: !!drug.trim(), medicalHistory: history });
             toast("Guest record updated"); onSaved(); onClose();
           } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
         }}>{busy ? "Saving…" : "Save"}</Btn>
