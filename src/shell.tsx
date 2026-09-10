@@ -26,20 +26,20 @@ const ic = "h-[16px] w-[16px]";
 
 const NAV: NavGroup[] = [
   { g: "Clinical", items: [
-    { to: "/doctor/my-day", label: "My day", icon: <CalendarDays className={ic} /> },
-    { to: "/doctor/consultation", label: "Consultation", icon: <Stethoscope className={ic} /> },
-    { to: "/doctor/my-patients", label: "My patients", icon: <Users className={ic} /> },
+    { to: "/dermatologist/my-day", label: "My day", icon: <CalendarDays className={ic} /> },
+    { to: "/dermatologist/consultation", label: "Consultation", icon: <Stethoscope className={ic} /> },
+    { to: "/dermatologist/my-patients", label: "My patients", icon: <Users className={ic} /> },
   ]},
   { g: "Me", items: [
-    { to: "/doctor/month", label: "My month", icon: <BarChart3 className={ic} /> },
-    { to: "/doctor/schedule", label: "My schedule", icon: <CalendarClock className={ic} /> },
-    { to: "/doctor/availability", label: "My centres", icon: <MapPin className={ic} /> },
-    { to: "/doctor/stock", label: "Product availability", icon: <PackageSearch className={ic} /> },
-    { to: "/doctor/profile", label: "My profile", icon: <IdCard className={ic} /> },
+    { to: "/dermatologist/month", label: "My month", icon: <BarChart3 className={ic} /> },
+    { to: "/dermatologist/schedule", label: "My schedule", icon: <CalendarClock className={ic} /> },
+    { to: "/dermatologist/availability", label: "My centres", icon: <MapPin className={ic} /> },
+    { to: "/dermatologist/stock", label: "Product availability", icon: <PackageSearch className={ic} /> },
+    { to: "/dermatologist/profile", label: "My profile", icon: <IdCard className={ic} /> },
   ]},
 ];
 
-export const HOME = "/doctor/my-day";
+export const HOME = "/dermatologist/my-day";
 
 /* ================= live sidebar badges ================= */
 function useNavBadges(role: Role, branchId: string) {
@@ -122,7 +122,7 @@ function SearchOverlay() {
           )}
           {r.patients.length > 0 && <div className="px-3 pt-2 font-mono text-[9.5px] font-bold uppercase tracking-[0.12em] text-ink3">Patients</div>}
           {r.patients.map((p) => (
-            <button key={p._id} onClick={() => go("/doctor/patient", { id: p._id })}
+            <button key={p._id} onClick={() => go("/dermatologist/patient", { id: p._id })}
               className="block w-full rounded-lg px-3 py-2 text-left text-[13px] hover:bg-ivory">
               <b className="font-semibold">{p.fullName}</b> <span className="text-ink3">· {p.phone}{p.location ? ` · ${p.location}` : ""}</span>
             </button>
@@ -200,28 +200,55 @@ export function Shell({ children }: { children: ReactNode }) {
   const badgeCounts = badges.data ?? {};
 
   return (
-    <div className="flex min-h-screen items-start">
-      <aside className="sticky top-0 flex h-screen w-[236px] shrink-0 flex-col bg-side pb-2 pt-3 text-side-ink">
-        <div data-tour="logo" className="shrink-0 flex justify-center border-b border-side-2 px-4 pb-2.5 pt-1">
-          <img src={logo} alt="Zennara" className="h-16 w-auto object-contain" />
+    /*
+     * Three shapes, one markup, matching the consult-room device.
+     *
+     *   > 1100px   full 236px sidebar — a tablet in landscape, or a desktop tab
+     *   ≤ 1100px   76px icon rail — a tablet in portrait, where 236px of nav is
+     *              a quarter of the screen the dermatologist is reading from
+     *   ≤ 720px    bottom bar — a phone, thumbs at the bottom
+     *
+     * Rows are 48px tall throughout. They used to be 26px, which is a mouse
+     * target, not a finger one.
+     */
+    <div className="flex min-h-screen items-start max-[720px]:block">
+      <aside
+        className="sticky top-0 z-30 flex h-screen w-[236px] shrink-0 flex-col bg-side px-3 pb-2 pt-4 text-side-ink
+                   max-[1100px]:w-[76px] max-[1100px]:items-center max-[1100px]:px-2
+                   max-[720px]:fixed max-[720px]:inset-x-0 max-[720px]:bottom-0 max-[720px]:top-auto max-[720px]:h-auto
+                   max-[720px]:w-full max-[720px]:flex-row max-[720px]:px-2 max-[720px]:pb-[max(0.375rem,env(safe-area-inset-bottom))] max-[720px]:pt-1.5">
+        <div data-tour="logo" className="flex shrink-0 items-center gap-2.5 px-2.5 pb-4 pt-1 max-[1100px]:flex-col max-[1100px]:gap-1.5 max-[1100px]:px-0 max-[720px]:hidden">
+          <img src={logo} alt="Zennara" className="h-10 w-auto object-contain opacity-95 brightness-0 invert max-[1100px]:h-[30px]" />
+          <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-side-mut max-[1100px]:hidden">Dermatologist</span>
         </div>
 
-        <div data-tour="nav" className="min-h-0 flex-1 overflow-y-auto pb-1 [scrollbar-color:var(--color-gold-dark)_transparent] [scrollbar-width:thin]">
+        <div data-tour="nav"
+          className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pb-1 [scrollbar-color:var(--color-gold-dark)_transparent] [scrollbar-width:thin]
+                     max-[1100px]:w-full max-[720px]:flex-row max-[720px]:justify-around max-[720px]:overflow-visible max-[720px]:pb-0">
           {NAV.map((grp) => (
-            <div key={grp.g}>
-              <div className="px-4 pb-0.5 pt-2.5 font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-side-mut">{grp.g}</div>
+            <div key={grp.g} className="max-[720px]:contents">
+              <div className="px-3 pb-0.5 pt-2.5 font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-side-mut max-[1100px]:hidden">{grp.g}</div>
               {grp.items.map((it) => {
                 const n = it.badge ? badgeCounts[it.badge] : undefined;
+                const active = loc.pathname === it.to;
                 return (
                   <NavLink key={it.to} to={it.to} data-tour={"nav-" + it.to.split("/").filter(Boolean).pop()}
+                    title={it.label}
                     className={({ isActive }) =>
-                      `mx-2 flex items-center justify-between gap-2 rounded-lg px-2.5 py-[5px] text-[12.3px] font-medium transition-colors ${
-                        isActive || loc.pathname === it.to
-                          ? "bg-side-2 text-white shadow-[inset_2px_0_0_var(--color-gold)]"
-                          : "hover:bg-side-2/50 hover:text-white"}`}>
-                    <span className="flex items-center gap-2.5">{it.icon}{it.label}</span>
+                      `relative flex min-h-[48px] items-center justify-between gap-3 rounded-xl px-3 text-[14px] font-semibold transition-colors
+                       max-[1100px]:justify-center max-[1100px]:px-0
+                       max-[720px]:min-h-[44px] max-[720px]:flex-1 ${
+                        isActive || active
+                          ? "bg-white/[0.08] text-white before:absolute before:inset-y-3 before:left-0 before:w-[3px] before:rounded-[3px] before:bg-gold before:content-[''] max-[720px]:before:inset-x-3 max-[720px]:before:inset-y-auto max-[720px]:before:bottom-0 max-[720px]:before:h-[3px] max-[720px]:before:w-auto"
+                          : "hover:bg-white/[0.06] hover:text-white"}`}>
+                    <span className="flex items-center gap-3 max-[1100px]:gap-0">
+                      {it.icon}
+                      <em className="not-italic max-[1100px]:hidden">{it.label}</em>
+                    </span>
                     {!!n && n > 0 && (
-                      <span className="rounded-full bg-gold px-1.5 font-mono text-[10px] font-bold text-primary">{n > 99 ? "99+" : n}</span>
+                      <span className="rounded-full bg-gold px-1.5 font-mono text-[10px] font-bold text-primary max-[1100px]:absolute max-[1100px]:right-2 max-[1100px]:top-1.5 max-[1100px]:px-1">
+                        {n > 99 ? "99+" : n}
+                      </span>
                     )}
                   </NavLink>
                 );
@@ -229,14 +256,21 @@ export function Shell({ children }: { children: ReactNode }) {
             </div>
           ))}
         </div>
-        <div className="shrink-0 border-t border-side-2 px-4 pb-0.5 pt-2 text-[11px] leading-tight text-side-mut">
-          <div className="mb-0.5 font-bold text-white">{who.name}</div>
-          <div>{who.role}{branchLabel ? ` · ${branchLabel}` : ""}</div>
+
+        <div className="flex shrink-0 items-center gap-2.5 border-t border-white/10 px-3 pb-0.5 pt-3 max-[1100px]:flex-col max-[1100px]:border-0 max-[1100px]:px-0 max-[720px]:hidden">
+          <span className="grid h-9 w-9 flex-none place-items-center rounded-full bg-gold text-[13px] font-extrabold text-primary">
+            {initials(who.name)}
+          </span>
+          <div className="min-w-0 leading-tight max-[1100px]:hidden">
+            <div className="truncate text-[13px] font-bold text-white">{who.name}</div>
+            <div className="truncate text-[12px] text-side-mut">{who.role}{branchLabel ? ` · ${branchLabel}` : ""}</div>
+          </div>
         </div>
       </aside>
 
-      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-40 flex flex-wrap items-center gap-3 border-b border-border bg-surface px-5 py-2.5">
+      {/* The bottom bar is fixed, so the last card needs room to clear it. */}
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col max-[720px]:pb-[86px]">
+        <header className="sticky top-0 z-40 flex flex-wrap items-center gap-3 border-b border-border bg-surface px-5 py-2.5 max-[720px]:px-4">
           {myBranches.length <= 1 ? (
             /* One centre (or none): nothing to switch, so state it instead of
                offering a dead menu. */
@@ -276,7 +310,7 @@ export function Shell({ children }: { children: ReactNode }) {
               }
               items={[
                 { label: <span><b>{who.name}</b><br /><span className="text-[11px] text-ink3">{who.role}{branchLabel ? ` · ${branchLabel}` : ""}</span></span> },
-                { label: "My profile", onClick: () => nav("/doctor/profile") },
+                { label: "My profile", onClick: () => nav("/dermatologist/profile") },
                 { label: "View tutorial again", onClick: () => { replayTour(); toast("Starting the walkthrough"); } },
                 { label: "Sign out", onClick: () => { logout(); toast("Signed out"); } },
               ]}

@@ -39,7 +39,7 @@ const PANEL_TOURS: Record<string, Step[]> = {
 
 /* ---- feature tours inside complex modules (3–4 steps) ---- */
 const MODULE_TOURS: Record<string, { key: string; steps: Step[] }> = {
-  "/doctor/consultation": {
+  "/dermatologist/consultation": {
     key: "m-consult",
     steps: [
       T("[data-tour=dictate]", "Dictate, don't type", "Tap the mic on any field — Examination, Assessment or Plan — and speak. Words appear live as you talk."),
@@ -97,7 +97,7 @@ export function Tours() {
     }
     const mod = MODULE_TOURS[loc.pathname];
     // The consultation tour points at the open-consult screen, not the guest picker.
-    const consultWithoutGuest = loc.pathname === "/doctor/consultation" && !(loc.state as { bookingId?: string } | null)?.bookingId;
+    const consultWithoutGuest = loc.pathname === "/dermatologist/consultation" && !(loc.state as { bookingId?: string } | null)?.bookingId;
     if (mod && !consultWithoutGuest && !seen(mod.key)) {
       setSteps(mod.steps); setTourKey(mod.key);
       const t = setTimeout(() => setRun(true), 600);

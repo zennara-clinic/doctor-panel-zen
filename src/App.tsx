@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { StoreProvider } from "./store";
 import { Shell, HOME } from "./shell";
 import { Tours } from "./tours";
@@ -18,6 +18,14 @@ function Guarded({ children }: { children: React.ReactNode }) {
 
 const page = (el: React.ReactNode) => <Guarded>{el}</Guarded>;
 
+
+/** `/doctor/my-day` → `/dermatologist/my-day`, keeping query and router state. */
+function LegacyDoctorPath() {
+  const { page: sub } = useParams();
+  const { search, state } = useLocation();
+  return <Navigate to={`/dermatologist/${sub ?? "my-day"}${search}`} state={state} replace />;
+}
+
 export default function App() {
   return (
     <StoreProvider>
@@ -26,17 +34,27 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to={HOME} replace />} />
 
-          <Route path="/doctor/my-day" element={page(<MyDay />)} />
-          <Route path="/doctor/consultation" element={page(<Consult />)} />
-          <Route path="/doctor/my-patients" element={page(<MyPatients />)} />
-          <Route path="/doctor/month" element={page(<MyMonth />)} />
-          <Route path="/doctor/availability" element={page(<Availability />)} />
+          <Route path="/dermatologist/my-day" element={page(<MyDay />)} />
+          <Route path="/dermatologist/consultation" element={page(<Consult />)} />
+          <Route path="/dermatologist/my-patients" element={page(<MyPatients />)} />
+          <Route path="/dermatologist/month" element={page(<MyMonth />)} />
+          <Route path="/dermatologist/availability" element={page(<Availability />)} />
           {/* Which centres they work at vs. when they sit — two questions,
               two screens. Availability is the former, Schedule the latter. */}
-          <Route path="/doctor/schedule" element={page(<Schedule />)} />
-          <Route path="/doctor/stock" element={page(<ProductStock />)} />
-          <Route path="/doctor/profile" element={page(<DoctorProfile />)} />
-          <Route path="/doctor/patient" element={page(<PatientDetail />)} />
+          <Route path="/dermatologist/schedule" element={page(<Schedule />)} />
+          <Route path="/dermatologist/stock" element={page(<ProductStock />)} />
+          <Route path="/dermatologist/profile" element={page(<DoctorProfile />)} />
+          <Route path="/dermatologist/patient" element={page(<PatientDetail />)} />
+
+          {/*
+            The panel used to live under /doctor/*. The word does not appear
+            anywhere a dermatologist can read it any more — including the
+            address bar — but bookmarks, the tour's deep links and anything
+            already pasted into a chat still point at the old paths, so they
+            redirect rather than falling through to the catch-all.
+          */}
+          <Route path="/doctor/:page" element={<LegacyDoctorPath />} />
+          <Route path="/doctor" element={<Navigate to={HOME} replace />} />
 
           <Route path="*" element={<Navigate to={HOME} replace />} />
         </Routes>

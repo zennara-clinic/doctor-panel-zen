@@ -1632,7 +1632,7 @@ export function PatientDetail() {
     next.set("id", id);
     setSp(next, { replace: true });
   }, [id, sp, setSp]);
-  const patientListPath = routeState?.returnTo || (role === "doctor" ? "/doctor/my-patients" : "/patients");
+  const patientListPath = routeState?.returnTo || (role === "doctor" ? "/dermatologist/my-patients" : "/patients");
 
   const q = useApi(async () => {
     if (!id) throw new Error("No patient selected — open one from the Patients list.");

@@ -110,7 +110,7 @@ export function MyDay() {
       actions={<>
         <input type="date" value={day} onChange={(e) => setDay(e.target.value)}
           className="rounded-(--radius-btn) border border-border bg-surface px-3 py-1.5 text-[12.5px] outline-none focus:border-gold-dark" />
-        <Btn kind="ghost" onClick={() => nav("/doctor/availability")}>My availability</Btn>
+        <Btn kind="ghost" onClick={() => nav("/dermatologist/availability")}>My availability</Btn>
       </>}>
       <Hint id="myday-live">Click any row to open the consultation screen with that guest's history, their pre-consult form and your last note already loaded.</Hint>
 
@@ -122,7 +122,7 @@ export function MyDay() {
               { k: "Next", v: next ? <span className="text-[16px]">{next.fullName}</span> : "—",
                 d: next ? bookingSlotLabel(next) : "nothing scheduled", hot: !!next },
               { k: "Today", v: rows.length, d: `${done.length} completed` },
-              { k: "This month", v: monthRows.length, d: `${monthCompleted} completed`, onClick: () => nav("/doctor/month") },
+              { k: "This month", v: monthRows.length, d: `${monthCompleted} completed`, onClick: () => nav("/dermatologist/month") },
               { k: "Awaiting notes", v: awaitingNotes, d: "completed without a signed note", hot: awaitingNotes > 0 },
               { k: "Centres", v: (doctor.availableCentres ?? []).length, d: (doctor.availableCentres ?? []).join(", ") || "none set" },
             ]} />
@@ -133,7 +133,7 @@ export function MyDay() {
                   hint="Pick another date above, or check that your availability is published." />
               ) : (
                 <DataTable cols={["Time", "Guest", "Service", "Centre", "Pre-consult", "Note", "Status"]}
-                  onRow={(i) => nav("/doctor/consultation", { state: { bookingId: rows[i]._id } })}
+                  onRow={(i) => nav("/dermatologist/consultation", { state: { bookingId: rows[i]._id } })}
                   rows={rows.map((b) => {
                     const formStatus = formByBooking.get(b._id);
                     const noteStatus = noteByBooking.get(b._id);
@@ -185,10 +185,10 @@ export function Consult() {
           {(doctor) => !doctor ? <NoProfile email={admin?.email} /> : (
             <Async q={day} label="Loading your day…" rows={5}>
               {() => todays.length === 0 ? (
-                <Empty title="Nothing booked today" action={<Btn kind="ghost" onClick={() => nav("/doctor/my-day")}>Open my day</Btn>} />
+                <Empty title="Nothing booked today" action={<Btn kind="ghost" onClick={() => nav("/dermatologist/my-day")}>Open my day</Btn>} />
               ) : (
                 <DataTable cols={["Time", "Guest", "Service", "Status", ""]}
-                  onRow={(i) => nav("/doctor/consultation", { state: { bookingId: todays[i]._id } })}
+                  onRow={(i) => nav("/dermatologist/consultation", { state: { bookingId: todays[i]._id } })}
                   rows={todays.map((b) => [
                     <B key={b._id}>{b.confirmedTime || b.preferredTimeSlots?.[0] || "—"}</B>,
                     <B key={`${b._id}n`}>{b.fullName}</B>,
@@ -204,7 +204,7 @@ export function Consult() {
     );
   }
 
-  return <ConsultScreen bookingId={bookingId} onBack={() => nav("/doctor/consultation", { state: {} })}
+  return <ConsultScreen bookingId={bookingId} onBack={() => nav("/dermatologist/consultation", { state: {} })}
     doctorName={me.data?.name ?? admin?.name ?? ""} me={me.data ?? null} audit={audit} toast={toast} />;
 }
 
@@ -487,7 +487,7 @@ ${signed.followUp ? `<p><b>Review on:</b> ${fmtDateFull(signed.followUp)}</p>` :
               <B>Paid</B> {bk.paymentStatus === "paid" ? fmtINR(bk.amount) : `${fmtINR(bk.amount)} due`}
             </div>
             {p && (
-              <Btn kind="ghost" className="mt-2.5 w-full" onClick={() => nav("/doctor/patient", { state: { id: p._id } })}>Full record →</Btn>
+              <Btn kind="ghost" className="mt-2.5 w-full" onClick={() => nav("/dermatologist/patient", { state: { id: p._id } })}>Full record →</Btn>
             )}
           </Card>
 
@@ -909,7 +909,7 @@ export function MyPatients() {
                 <Empty title="No patients yet" hint="Guests appear here once they have been booked with you." />
               ) : (
                 <DataTable cols={["Patient", "Seen for", "Completed visits", "Last seen", "Next"]}
-                  onRow={(i) => nav("/doctor/patient", { state: { id: rows[i].userId } })}
+                  onRow={(i) => nav("/dermatologist/patient", { state: { id: rows[i].userId } })}
                   rows={rows.map((r) => [
                     <B key={r.userId}>{r.name}</B>,
                     [...r.services].filter(Boolean).slice(0, 2).join(", ") || "—",
