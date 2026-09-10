@@ -298,6 +298,14 @@ export const doctors = {
   toggle: (id: string) => request<Doctor>(`/doctors/${id}/toggle-status`, { method: "PATCH" }),
   /** The Doctor profile behind the signed-in staff login (role doctor). */
   me: () => requestRaw<Doctor | null>("/doctors/me") as Promise<Envelope<Doctor | null> & { linked?: boolean }>,
+  /**
+   * Every guest this dermatologist has ever been booked with, one row per
+   * guest, grouped, searched, sorted and paged on the server.
+   */
+  myPatients: (q?: { search?: string; filter?: "all" | "booked" | "unbooked"; sort?: "recent" | "name" | "next" | "visits"; page?: number; limit?: number }) =>
+    requestRaw<MyPatient[]>("/doctors/me/patients", { query: q as Query }) as Promise<Envelope<MyPatient[]> & {
+      linked?: boolean; total?: number; page?: number; pages?: number; counts?: { all: number; booked: number; unbooked: number };
+    }>,
   tiers: () => request<{ id: string; title: string; description?: string; fee: number }[]>("/doctors/tiers/list"),
   updateTier: (tierId: string, body: { title?: string; description?: string; fee?: number; isActive?: boolean }) =>
     requestRaw(`/doctors/tiers/${tierId}`, { method: "PUT", body }),
@@ -452,7 +460,8 @@ export const orders = {
  */
 export const productAvailability = {
   list: (q?: { search?: string; branchId?: Id; status?: string; limit?: number }) =>
-    requestRaw<ProductAvailability[]>("/inventory/availability", { query: q as Query }),
+    // Mounted under /api/admin/inventory; the bare /inventory path never existed.
+    requestRaw<ProductAvailability[]>("/admin/inventory/availability", { query: q as Query }),
 };
 
 /**
@@ -804,6 +813,25 @@ export const staff = {
   update: (id: Id, body: Partial<Admin>) => request<Admin>(`/admin/staff/${id}`, { method: "PUT", body }),
   toggle: (id: Id) => request<Admin>(`/admin/staff/${id}/toggle-status`, { method: "PATCH" }),
   remove: (id: Id) => requestRaw(`/admin/staff/${id}`, { method: "DELETE" }),
+};
+
+/** One guest under a dermatologist's care, as GET /doctors/me/patients returns it. */
+export type MyPatient = {
+  userId: Id;
+  fullName: string;
+  phone?: string | null;
+  patientId?: string | null;
+  gender?: string | null;
+  dateOfBirth?: string | null;
+  drugAllergy?: string | null;
+  memberType?: string | null;
+  bookings: number;
+  visits: number;
+  lastVisit?: string | null;
+  /** Latest booking up to today that was not cancelled — attended or not. */
+  lastBooked?: string | null;
+  nextVisit?: string | null;
+  services: string[];
 };
 
 /* ============================ zenoti (CRM) ============================ */

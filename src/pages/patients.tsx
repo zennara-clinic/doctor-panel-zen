@@ -5,7 +5,7 @@ import {
   Search, ShieldCheck, Sparkles, Stethoscope, Users,
 } from "lucide-react";
 import api from "../lib/api";
-import type { ZenotiAppointment, ZenotiMembership, ZenotiPackage } from "../lib/api";
+import type { MyPatient, ZenotiAppointment, ZenotiMembership, ZenotiPackage } from "../lib/api";
 import { useApi, useDebounced } from "../lib/useApi";
 import { useMyDoctor } from "../lib/useMe";
 import { useStore } from "../store";
@@ -19,56 +19,60 @@ import { appointmentState, fmtZDate, fmtZWhen, membershipActive, pkgActive } fro
 import {
   ageFrom, bookingServiceName, fmtDate, fmtDateLong, fmtWhen, idOf, initials, isoDay,
 } from "../lib/format";
-import type { PreConsultForm, User } from "../lib/types";
+import type { Doctor, PreConsultForm, User } from "../lib/types";
+import { ApiError } from "../lib/http";
 
 /* =============================================================== my patients */
 
-type Row = { name: string; userId: string; visits: number; last?: string; next?: string; nextTime?: string; services: Set<string> };
+type PatientSort = "recent" | "name" | "next" | "visits";
+const SORT_LABEL: Record<PatientSort, string> = {
+  recent: "Most recent first",
+  name: "Name, A to Z",
+  next: "Next appointment",
+  visits: "Most visits",
+};
+const PAGE = 30;
 
+/**
+ * Everyone this dermatologist has ever been booked with.
+ *
+ * Grouped, searched, sorted and paged on the server (GET /doctors/me/patients)
+ * — a dermatologist can have several thousand bookings, and pulling them all
+ * to count guests in the browser was slow enough to show an empty list.
+ */
 export function MyPatients() {
   const nav = useNavigate();
   const { admin, setSearchOpen } = useStore();
-  const me = useMyDoctor();
   const [search, setSearch] = useState("");
-  const debounced = useDebounced(search, 200);
+  const debounced = useDebounced(search, 300);
   const [filter, setFilter] = useState<"all" | "booked" | "unbooked">("all");
+  const [sort, setSort] = useState<PatientSort>("recent");
+  const [page, setPage] = useState(1);
+  const term = debounced.trim();
+  useEffect(() => { setPage(1); }, [term, filter, sort]);
 
-  const q = useApi(async () => {
-    if (!me.data) return [] as Row[];
-    const res = await api.bookings.list({ specialistId: me.data.doctorId });
-    const mine = (res.data ?? []).filter(
-      (b) => !b.specialistId || b.specialistId === me.data!.doctorId || b.specialistName === me.data!.name,
-    );
-    // One row per guest: "who is under my care", not "every appointment".
-    const byUser = new Map<string, Row>();
-    for (const b of mine) {
-      const id = idOf(b.userId);
-      if (!id) continue;
-      const entry = byUser.get(id) ?? { name: b.fullName, userId: id, visits: 0, services: new Set<string>() };
-      const when = b.confirmedDate || b.preferredDate;
-      if (b.status === "Completed") {
-        entry.visits += 1;
-        if (!entry.last || new Date(when) > new Date(entry.last)) entry.last = when;
-      } else if (isOpenVisit(b) && isoDay(new Date(when)) >= isoDay()) {
-        if (!entry.next || new Date(when) < new Date(entry.next)) { entry.next = when; entry.nextTime = visitTime(b); }
-      }
-      const svc = bookingServiceName(b, "");
-      if (svc) entry.services.add(svc);
-      byUser.set(id, entry);
-    }
-    return [...byUser.values()].sort((a, b) => (b.last ? new Date(b.last).getTime() : 0) - (a.last ? new Date(a.last).getTime() : 0));
-  }, [me.data?._id]);
-
-  const all = q.data ?? [];
-  const rows = all
-    .filter((r) => !debounced || r.name.toLowerCase().includes(debounced.toLowerCase()))
-    .filter((r) => filter === "all" || (filter === "booked" ? !!r.next : !r.next));
+  const me = useMyDoctor();
+  const q = useApi(
+    () => api.doctors.myPatients({ search: term || undefined, filter, sort, page, limit: PAGE })
+      .catch((e) => {
+        // Until the API with /doctors/me/patients is deployed, group in the browser.
+        if (e instanceof ApiError && e.status === 404 && me.data) return patientsInBrowser(me.data, { term, filter, sort, page });
+        throw e;
+      }),
+    [term, filter, sort, page, me.data?._id],
+  );
+  const res = q.data;
+  const rows: MyPatient[] = res?.data ?? [];
+  const total = res?.total ?? 0;
+  const counts = res?.counts ?? { all: 0, booked: 0, unbooked: 0 };
+  const pages = Math.max(1, res?.pages ?? 1);
+  const from = total ? (page - 1) * PAGE + 1 : 0;
 
   return (
     <div className="dz-page">
       <header className="dz-head">
         <div className="dz-head__txt">
-          <div className="dz-eyebrow">{me.data ? `${all.length} under your care` : " "}</div>
+          <div className="dz-eyebrow">{res && !term ? `${counts.all.toLocaleString("en-IN")} under your care` : "Your patients"}</div>
           <h1 className="dz-title">Patients</h1>
         </div>
         <div className="dz-head__actions">
@@ -76,53 +80,103 @@ export function MyPatients() {
         </div>
       </header>
 
-      <Async q={me} label="Loading your profile…" rows={3}>
-        {(doctor) => !doctor ? <NoProfile email={admin?.email} /> : (
-          <>
-            <div className="dz-row mb-4">
-              <div className="dz-searchbox" style={{ flex: "1 1 280px", maxWidth: 520 }}>
-                <Search />
-                <input className="dz-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search your patients by name" />
-              </div>
-              <Segmented value={filter} onChange={setFilter} options={[
-                { key: "all", label: "All", count: all.length },
-                { key: "booked", label: "Booked ahead", count: all.filter((r) => r.next).length },
-                { key: "unbooked", label: "Not booked", count: all.filter((r) => !r.next).length },
-              ]} />
-            </div>
+      <div className="dz-row mb-4">
+        <div className="dz-searchbox" style={{ flex: "1 1 280px", maxWidth: 480 }}>
+          <Search />
+          <input className="dz-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, phone or patient ID" />
+        </div>
+        <Segmented value={filter} onChange={setFilter} options={[
+          { key: "all", label: "All", count: counts.all },
+          { key: "booked", label: "Booked ahead", count: counts.booked },
+          { key: "unbooked", label: "Not booked", count: counts.unbooked },
+        ]} />
+        <select className="dz-select" style={{ width: 220 }} value={sort} aria-label="Sort patients"
+          onChange={(e) => setSort(e.target.value as PatientSort)}>
+          {(Object.keys(SORT_LABEL) as PatientSort[]).map((k) => <option key={k} value={k}>{SORT_LABEL[k]}</option>)}
+        </select>
+      </div>
 
-            <Async q={q} label="Gathering your patients…" rows={6}>
-              {() => rows.length === 0 ? (
-                <Empty icon={<Users />} title={all.length ? "No patient matches" : "No patients yet"}
-                  hint={all.length ? "Try another name, or clear the filter." : "Guests appear here once they have been booked with you."} />
-              ) : (
-                <div className="dz-list">
-                  {rows.map((r) => (
-                    <button key={r.userId} type="button" className="dz-prow"
-                      onClick={() => nav(`/dermatologist/patient?id=${r.userId}`, { state: { id: r.userId } })}>
-                      <span className="dz-avatar dz-avatar--lg dz-avatar--sage" style={{ width: 48, height: 48, fontSize: 16 }}>{initials(r.name)}</span>
-                      <span className="min-w-0">
-                        <span className="dz-prow__name">
-                          {r.name}
-                          {r.next && <span className="dz-pill dz-pill--sm">Next: {fmtWhen(r.next, r.nextTime)}</span>}
-                        </span>
-                        <span className="dz-prow__sub">{[...r.services].slice(0, 3).join(" · ") || "—"}</span>
-                      </span>
-                      <span className="dz-prow__side">
-                        {r.last ? <>Last seen <b>{fmtDate(r.last)}</b></> : <>Not seen yet</>}<br />
-                        {r.visits} visit{r.visits === 1 ? "" : "s"}
-                      </span>
-                      <ChevronRight />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </Async>
-          </>
+      <Async q={q} label="Gathering your patients…" rows={6}>
+        {(r) => r.linked === false ? <NoProfile email={admin?.email} /> : rows.length === 0 ? (
+          <Empty icon={<Users />} title={term || filter !== "all" ? "No patient matches" : "No patients yet"}
+            hint={term || filter !== "all" ? "Try another name or number, or clear the filter." : "Guests appear here once they have been booked with you."} />
+        ) : (
+          <div style={{ opacity: q.loading ? 0.6 : 1, transition: "opacity .15s" }}>
+            <div className="dz-list">
+              {rows.map((p) => (
+                <button key={p.userId} type="button" className="dz-prow"
+                  onClick={() => nav(`/dermatologist/patient?id=${p.userId}`, { state: { id: p.userId } })}>
+                  <span className="dz-avatar dz-avatar--sage" style={{ width: 48, height: 48, fontSize: 16 }}>{initials(p.fullName)}</span>
+                  <span className="min-w-0">
+                    <span className="dz-prow__name">
+                      {p.fullName}
+                      {p.drugAllergy && <span className="dz-pill dz-pill--sm dz-pill--err"><AlertTriangle />Allergy</span>}
+                      {p.nextVisit && <span className="dz-pill dz-pill--sm">Next: {fmtWhen(p.nextVisit)}</span>}
+                    </span>
+                    <span className="dz-prow__sub">
+                      {[p.patientId, [ageFrom(p.dateOfBirth) ? `${ageFrom(p.dateOfBirth)} yrs` : null, p.gender].filter(Boolean).join(" "), p.services.slice(0, 3).join(" · ")].filter(Boolean).join(" · ") || "—"}
+                    </span>
+                  </span>
+                  <span className="dz-prow__side">
+                    {p.lastVisit ? <>Last seen <b>{fmtDate(p.lastVisit)}</b></> : p.lastBooked ? <>Last booked <b>{fmtDate(p.lastBooked)}</b></> : p.nextVisit ? <>First visit ahead</> : <>Not seen yet</>}<br />
+                    {p.visits} visit{p.visits === 1 ? "" : "s"} · {p.bookings} booking{p.bookings === 1 ? "" : "s"}
+                  </span>
+                  <ChevronRight />
+                </button>
+              ))}
+            </div>
+            <div className="dz-pager">
+              <span>{from.toLocaleString("en-IN")}–{Math.min(page * PAGE, total).toLocaleString("en-IN")} of {total.toLocaleString("en-IN")}</span>
+              <button type="button" className="dz-btn dz-btn--secondary dz-btn--sm" disabled={page <= 1 || q.loading} onClick={() => { setPage(page - 1); window.scrollTo({ top: 0 }); }}>Previous</button>
+              <button type="button" className="dz-btn dz-btn--secondary dz-btn--sm" disabled={page >= pages || q.loading} onClick={() => { setPage(page + 1); window.scrollTo({ top: 0 }); }}>Next</button>
+            </div>
+          </div>
         )}
       </Async>
     </div>
   );
+}
+
+type PatientsPage = Awaited<ReturnType<typeof api.doctors.myPatients>>;
+
+/**
+ * The old in-browser grouping, same shape as GET /doctors/me/patients. Only a
+ * fallback for an API that predates that endpoint; slow for large diaries.
+ */
+async function patientsInBrowser(doctor: Doctor, o: { term: string; filter: "all" | "booked" | "unbooked"; sort: PatientSort; page: number }): Promise<PatientsPage> {
+  const res = await api.bookings.list({ specialistId: doctor.doctorId });
+  const now = Date.now();
+  const today = isoDay();
+  const byUser = new Map<string, MyPatient & { recency: number }>();
+  for (const b of res.data ?? []) {
+    const id = idOf(b.userId);
+    if (!id) continue;
+    const u = typeof b.userId === "object" ? (b.userId as User) : null;
+    const whenIso = b.eventAt || b.confirmedDate || b.preferredDate;
+    const when = new Date(whenIso).getTime();
+    const row = byUser.get(id) ?? { userId: id, fullName: u?.fullName || b.fullName, phone: u?.phone ?? b.mobileNumber, patientId: u?.patientId ?? null, bookings: 0, visits: 0, services: [], recency: 0 };
+    row.bookings += 1;
+    if (b.status === "Completed") { row.visits += 1; if (!row.lastVisit || when > new Date(row.lastVisit).getTime()) row.lastVisit = whenIso; }
+    if (b.status !== "Cancelled" && when <= now && (!row.lastBooked || when > new Date(row.lastBooked).getTime())) row.lastBooked = whenIso;
+    if (isOpenVisit(b) && isoDay(new Date(whenIso)) >= today && (!row.nextVisit || when < new Date(row.nextVisit).getTime())) row.nextVisit = whenIso;
+    const svc = bookingServiceName(b, "");
+    if (svc && !row.services.includes(svc)) row.services.push(svc);
+    byUser.set(id, row);
+  }
+  let rows = [...byUser.values()].map((r) => ({ ...r, recency: new Date(r.lastBooked || r.nextVisit || 0).getTime() }));
+  const counts = { all: 0, booked: 0, unbooked: 0 };
+  if (o.term) { const t = o.term.toLowerCase(); rows = rows.filter((r) => [r.fullName, r.phone, r.patientId].some((v) => String(v ?? "").toLowerCase().includes(t))); }
+  counts.all = rows.length; counts.booked = rows.filter((r) => r.nextVisit).length; counts.unbooked = counts.all - counts.booked;
+  if (o.filter !== "all") rows = rows.filter((r) => (o.filter === "booked" ? !!r.nextVisit : !r.nextVisit));
+  const sorters: Record<PatientSort, (a: typeof rows[number], b: typeof rows[number]) => number> = {
+    recent: (a, b) => b.recency - a.recency,
+    name: (a, b) => a.fullName.localeCompare(b.fullName),
+    next: (a, b) => (a.nextVisit ? new Date(a.nextVisit).getTime() : Infinity) - (b.nextVisit ? new Date(b.nextVisit).getTime() : Infinity),
+    visits: (a, b) => b.visits - a.visits || b.recency - a.recency,
+  };
+  rows.sort(sorters[o.sort]);
+  const total = rows.length;
+  return { success: true, linked: true, total, page: o.page, pages: Math.max(1, Math.ceil(total / PAGE)), counts, data: rows.slice((o.page - 1) * PAGE, o.page * PAGE) };
 }
 
 /* ============================================================ patient record */

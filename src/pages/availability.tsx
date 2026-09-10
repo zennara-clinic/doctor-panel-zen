@@ -162,7 +162,8 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
   }, [month]);
 
   const days = useApi(
-    () => api.schedules.days(doctorId, monthRange.from, monthRange.to),
+    // No request until the profile is known — an empty id is a 404 on /dermatologists//availability.
+    () => (doctorId ? api.schedules.days(doctorId, monthRange.from, monthRange.to) : Promise.resolve({ days: [] } as unknown as Awaited<ReturnType<typeof api.schedules.days>>)),
     [doctorId, monthRange.from, monthRange.to, saved],
   );
 
