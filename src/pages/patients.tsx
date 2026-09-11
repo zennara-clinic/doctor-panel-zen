@@ -73,8 +73,8 @@ export function MyPatients() {
     <div className="dz-page">
       <header className="dz-head">
         <div className="dz-head__txt">
-          <div className="dz-eyebrow">{res && !term ? `${counts.all.toLocaleString("en-IN")} under your care` : "Your patients"}</div>
-          <h1 className="dz-title">Patients</h1>
+          <div className="dz-eyebrow">{res && !term ? `${counts.all.toLocaleString("en-IN")} under your care` : "Your guests"}</div>
+          <h1 className="dz-title">Guests</h1>
         </div>
         <div className="dz-head__actions">
           <Btn kind="secondary" title="Searches guests booked with you" onClick={() => setSearchOpen(true)}><Search />Find a guest</Btn>
@@ -84,22 +84,22 @@ export function MyPatients() {
       <div className="dz-row mb-4">
         <div className="dz-searchbox" style={{ flex: "1 1 280px", maxWidth: 480 }}>
           <Search />
-          <input className="dz-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, phone or patient ID" />
+          <input className="dz-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, phone or guest ID" />
         </div>
         <Segmented value={filter} onChange={setFilter} options={[
           { key: "all", label: "All", count: counts.all },
           { key: "booked", label: "Booked ahead", count: counts.booked },
           { key: "unbooked", label: "Not booked", count: counts.unbooked },
         ]} />
-        <select className="dz-select" style={{ width: 220 }} value={sort} aria-label="Sort patients"
+        <select className="dz-select" style={{ width: 220 }} value={sort} aria-label="Sort guests"
           onChange={(e) => setSort(e.target.value as PatientSort)}>
           {(Object.keys(SORT_LABEL) as PatientSort[]).map((k) => <option key={k} value={k}>{SORT_LABEL[k]}</option>)}
         </select>
       </div>
 
-      <Async q={q} label="Gathering your patients…" rows={6}>
+      <Async q={q} label="Gathering your guests…" rows={6}>
         {(r) => r.linked === false ? <NoProfile email={admin?.email} /> : rows.length === 0 ? (
-          <Empty icon={<Users />} title={term || filter !== "all" ? "No patient matches" : "No patients yet"}
+          <Empty icon={<Users />} title={term || filter !== "all" ? "No guest matches" : "No guests yet"}
             hint={term || filter !== "all" ? "Try another name or number, or clear the filter." : "Guests appear here once they have been booked with you."} />
         ) : (
           <div style={{ opacity: q.loading ? 0.6 : 1, transition: "opacity .15s" }}>
@@ -206,7 +206,7 @@ export function PatientRecord() {
   const [openForm, setOpenForm] = useState<PreConsultForm | null>(null);
 
   const q = useApi(async () => {
-    if (!id) throw new Error("No guest selected — open one from Patients.");
+    if (!id) throw new Error("No guest selected — open one from Guests.");
     // A part that fails to load is named, never shown as an empty list — a real
     // guest must not read "no notes" because a request failed.
     const failed: string[] = [];
@@ -228,7 +228,7 @@ export function PatientRecord() {
   const pk = useGuestPackages(id, { watch: tab === "packages", onLive: clinic.reload });
 
   return (
-    <Async q={q} label="Loading the patient record…" rows={6}>
+    <Async q={q} label="Loading the guest record…" rows={6}>
       {({ user: p, bookings, assignments, forms, consents, notes, photos, failed }) => {
         const age = ageFrom(p.dateOfBirth);
         const zd = clinic.data?.details ?? null;
@@ -254,7 +254,7 @@ export function PatientRecord() {
           <div className="dz-page">
             <header className="dz-head">
               <div className="dz-head__txt">
-                <button type="button" className="dz-back" onClick={() => nav("/dermatologist/my-patients")}><ChevronRight style={{ transform: "rotate(180deg)" }} />Patients</button>
+                <button type="button" className="dz-back" onClick={() => nav("/dermatologist/my-patients")}><ChevronRight style={{ transform: "rotate(180deg)" }} />Guests</button>
                 <div className="flex items-center gap-4">
                   <span className="dz-avatar dz-avatar--xl dz-avatar--sage">{initials(p.fullName)}</span>
                   <div className="min-w-0">

@@ -692,7 +692,7 @@ function GuestContext({ bk, patient: p, form, consent, history, paperIntake, doc
       <Panel icon={<ShieldCheck />} title="Consent"
         right={consent ? <span className={`dz-pill dz-pill--sm ${consent.doctorSignature ? "dz-pill--ok" : "dz-pill--warn"}`}>{consent.doctorSignature ? "Counter-signed" : "Needs your signature"}</span> : undefined}>
         {!consent ? (
-          <div className="dz-hint">No patient consent form on file — the guest signs it in the app.</div>
+          <div className="dz-hint">No consent form on file — the guest signs it in the app.</div>
         ) : (
           <div className="dz-stack--sm">
             <div className="text-[14px] text-ink2">Signed by <b className="text-ink">{consent.patientName}</b>{consent.createdAt ? ` on ${fmtDate(consent.createdAt)}` : ""}.</div>
@@ -1035,8 +1035,8 @@ function RxSheet({ sheetRef, bk, patient: p, form, draft, note, signed, doctorNa
         <div className="dz-rxsheet__clinic"><strong>Zennara Clinics</strong>Skin · Aesthetics · Wellness{bk.preferredLocation ? <><br />{bk.preferredLocation}</> : null}</div>
       </div>
       <div className="dz-rxsheet__pt">
-        <div><span>Patient</span>{p?.fullName ?? bk.fullName}</div>
-        <div><span>Patient ID</span>{p?.patientId ?? "—"}</div>
+        <div><span>Guest</span>{p?.fullName ?? bk.fullName}</div>
+        <div><span>Guest ID</span>{p?.patientId ?? "—"}</div>
         <div><span>Age / gender</span>{[age ? `${age} yrs` : null, p?.gender].filter(Boolean).join(" · ") || "—"}</div>
         <div><span>Date</span>{fmtDate(signed ? note?.prescriptionSignedAt ?? note?.completedAt : new Date())}</div>
         <div><span>Dermatologist</span>{signedBy || "—"}</div>

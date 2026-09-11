@@ -24,7 +24,7 @@ type NavItem = { to: string; label: string; icon: ReactNode; tour: string; badge
  */
 const NAV: NavItem[] = [
   { to: "/dermatologist/my-day", label: "Today", icon: <Sun />, tour: "nav-my-day", badge: "waiting" },
-  { to: "/dermatologist/my-patients", label: "Patients", icon: <Users />, tour: "nav-my-patients" },
+  { to: "/dermatologist/my-patients", label: "Guests", icon: <Users />, tour: "nav-my-patients" },
   { to: "/dermatologist/schedule", label: "Schedule", icon: <CalendarClock />, tour: "nav-schedule" },
   { to: "/dermatologist/stock", label: "Products", icon: <PackageSearch />, tour: "nav-stock" },
   { to: "/dermatologist/month", label: "Insights", icon: <BarChart3 />, tour: "nav-month" },
@@ -90,7 +90,7 @@ function SearchOverlay() {
 
   return (
     <div className="dz-scrim dz-scrim--top" onMouseDown={(e) => { if (e.target === e.currentTarget) setSearchOpen(false); }}>
-      <div className="dz-spotlight" role="dialog" aria-label="Search patients">
+      <div className="dz-spotlight" role="dialog" aria-label="Search guests">
         <div className="dz-spotlight__bar">
           <Search />
           <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search guests booked with you — name or ID" />

@@ -315,7 +315,7 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                   <SecH t="Working hours, leave & block-outs" right={<Tag kind="info">Managed in Zenoti</Tag>} />
                   <p className="text-[12.5px] leading-relaxed text-ink2">
                     Set them in Zenoti. This panel reads them back live — the calendar
-                    opposite is what patients can actually book, and updates on its own
+                    opposite is what guests can actually book, and updates on its own
                     within about ten seconds of a change.
                   </p>
                 </Card>
@@ -518,7 +518,7 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                       {/* Saved state, not the draft — a slot cannot be shown as
                           booked against hours that have not been saved yet. */}
                       {dirty ? (
-                        <p className="text-[12px] text-ink3">Save to see how this date looks to patients.</p>
+                        <p className="text-[12px] text-ink3">Save to see how this date looks to guests.</p>
                       ) : (
                         <Async q={slots}>
                           {(d) =>

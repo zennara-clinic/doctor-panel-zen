@@ -150,7 +150,7 @@ export function PreConsultBody({ form }: { form: PreConsultForm }) {
           <div className="flex flex-wrap gap-1.5 pt-1">
             {(form.photos ?? []).map((ph, i) => (
               <a key={i} href={ph.url} target="_blank" rel="noreferrer">
-                <img src={ph.url} alt={ph.caption || "Patient photo"} className="h-24 w-24 rounded-xl border border-border object-cover" />
+                <img src={ph.url} alt={ph.caption || "Guest photo"} className="h-24 w-24 rounded-xl border border-border object-cover" />
               </a>
             ))}
           </div>

@@ -207,7 +207,7 @@ export function ZenotiList({ kind, embedded }: { kind: Kind; embedded?: boolean 
 
   const filters = (
     <div className="mb-3 flex flex-wrap items-center gap-2">
-      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter by customer, phone or service…"
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter by guest, phone or service…"
         className="w-full max-w-[360px] rounded-(--radius-btn) border border-border bg-surface px-3.5 py-2 text-[13px] outline-none focus:border-gold-dark" />
       {(kind === "packages" || kind === "memberships") && (
         <div className="flex gap-1">
@@ -233,11 +233,11 @@ export function ZenotiList({ kind, embedded }: { kind: Kind; embedded?: boolean 
 
   let table: React.ReactNode;
   if (q.loading && !q.data) table = <div className="p-6"><Spinner /></div>;
-  else if (rows.length === 0) table = <Empty title={`No ${kind} here`} hint={debounced ? `Nothing matched “${debounced}”.` : "Clinic history fills in as customers are synced from Zenoti."} />;
+  else if (rows.length === 0) table = <Empty title={`No ${kind} here`} hint={debounced ? `Nothing matched “${debounced}”.` : "Clinic history fills in as guests are synced from Zenoti."} />;
   else if (kind === "packages") {
     const rs = rows as ZenotiListRow<ZenotiPackage>[];
     table = (
-      <DataTable cols={["Customer", "Package", "Sessions", "Bought", "Expires", "Price", "Status"]} onRow={(i) => open(rs[i])}
+      <DataTable cols={["Guest", "Package", "Sessions", "Bought", "Expires", "Price", "Status"]} onRow={(i) => open(rs[i])}
         rows={rs.map((r) => {
           const k = r.item; const total = num(k.sessionsTotal); const left = num(k.sessionsRemaining);
           return [
@@ -254,7 +254,7 @@ export function ZenotiList({ kind, embedded }: { kind: Kind; embedded?: boolean 
   } else if (kind === "appointments") {
     const rs = rows as ZenotiListRow<ZenotiAppointment>[];
     table = (
-      <DataTable cols={["When", "Customer", "Service", "Therapist", "Centre", "Price", ""]} onRow={(i) => open(rs[i])}
+      <DataTable cols={["When", "Guest", "Service", "Therapist", "Centre", "Price", ""]} onRow={(i) => open(rs[i])}
         rows={rs.map((r) => {
           const state = appointmentState(r.item);
           return [
@@ -270,7 +270,7 @@ export function ZenotiList({ kind, embedded }: { kind: Kind; embedded?: boolean 
   } else if (kind === "memberships") {
     const rs = rows as ZenotiListRow<ZenotiMembership>[];
     table = (
-      <DataTable cols={["Customer", "Membership", "Since", "Expires", "Credit", "Status"]} onRow={(i) => open(rs[i])}
+      <DataTable cols={["Guest", "Membership", "Since", "Expires", "Credit", "Status"]} onRow={(i) => open(rs[i])}
         rows={rs.map((r) => [
           <span key={String(r.userId)}><B>{who(r)}</B><br /><span className="text-[11px] text-ink3">{r.user?.phone} · {r.branchName ?? "—"}</span></span>,
           <span key={`${r.userId}m`}>{r.item.name ?? "Membership"}{r.item.code ? <span className="ml-1 text-[11px] text-ink3">({r.item.code})</span> : null}</span>,
@@ -283,7 +283,7 @@ export function ZenotiList({ kind, embedded }: { kind: Kind; embedded?: boolean 
   } else if (kind === "notes") {
     const rs = rows as ZenotiListRow<ZenotiNote>[];
     table = (
-      <DataTable cols={["Date", "Customer", "Note", "Type", "Added by", "Centre"]} onRow={(i) => open(rs[i])}
+      <DataTable cols={["Date", "Guest", "Note", "Type", "Added by", "Centre"]} onRow={(i) => open(rs[i])}
         rows={rs.map((r) => [
           fmtZWhen(r.item.createdAt),
           <span key={String(r.userId)}><B>{who(r)}</B><br /><span className="text-[11px] text-ink3">{r.user?.phone}</span></span>,
@@ -302,7 +302,7 @@ export function ZenotiList({ kind, embedded }: { kind: Kind; embedded?: boolean 
       return <Tag kind="mute">{v === null ? "No form" : String(v)}</Tag>;
     };
     table = (
-      <DataTable cols={["Customer", "Form", "Last filled", "Filled by", "Status", ""]} onRow={(i) => open(rs[i])}
+      <DataTable cols={["Guest", "Form", "Last filled", "Filled by", "Status", ""]} onRow={(i) => open(rs[i])}
         rows={rs.map((r) => [
           <span key={String(r.userId)}><B>{who(r)}</B><br /><span className="text-[11px] text-ink3">{r.user?.phone}</span></span>,
           r.item.name ?? "Form",
@@ -315,7 +315,7 @@ export function ZenotiList({ kind, embedded }: { kind: Kind; embedded?: boolean 
   } else {
     const rs = rows as ZenotiListRow<ZenotiOrder>[];
     table = (
-      <DataTable cols={["Date", "Customer", "Product", "Qty", "Price", "Paid by", "Invoice"]} onRow={(i) => open(rs[i])}
+      <DataTable cols={["Date", "Guest", "Product", "Qty", "Price", "Paid by", "Invoice"]} onRow={(i) => open(rs[i])}
         rows={rs.map((r) => [
           fmtZDate(r.item.saleDate),
           <span key={String(r.userId)}><B>{who(r)}</B><br /><span className="text-[11px] text-ink3">{r.user?.phone}</span></span>,
@@ -383,20 +383,20 @@ export function ClinicData() {
 
   return (
     <Page title="Zennara clinic data"
-      sub="Patients and every supported clinic dataset are mirrored here, with per-section coverage and errors."
+      sub="Guests and every supported clinic dataset are mirrored here, with per-section coverage and errors."
       actions={isAdmin ? <>
         <Btn kind="ghost" disabled={s?.appointmentSyncRunning} onClick={() => run(() => api.zenoti.syncAppointments(), "Refreshing every clinic appointment book now")}>Sync appointments</Btn>
-        <Btn kind="ghost" disabled={busy} onClick={() => run(() => api.zenoti.crawl(80), "Refreshing the 80 least-recent customers")}> 
+        <Btn kind="ghost" disabled={busy} onClick={() => run(() => api.zenoti.crawl(80), "Refreshing the 80 least-recent guests")}> 
           <span className="flex items-center gap-1.5"><RefreshCw className={`h-3.5 w-3.5 ${s?.detailsRunning ? "animate-spin" : ""}`} />Refresh history</span>
         </Btn>
-        <Btn disabled={busy} onClick={() => run(() => api.zenoti.import(), "Full import started — patients and all supported history are syncing")}>
+        <Btn disabled={busy} onClick={() => run(() => api.zenoti.import(), "Full import started — guests and all supported history are syncing")}>
           {s?.fullImportRunning || s?.rosterRunning ? "Full import running…" : "Import everything"}
         </Btn>
       </> : undefined}>
       {s && !s.configured && <Note kind="crit">Zenoti is not configured on the server (ZENOTI_API_KEY). Nothing will sync until it is.</Note>}
       {s && (
         <Stats items={[
-          { k: "Clinic customers", v: s.linkedUsers.toLocaleString("en-IN"), d: "in Patients", onClick: () => nav("/patients") },
+          { k: "Clinic guests", v: s.linkedUsers.toLocaleString("en-IN"), d: "in Guests", onClick: () => nav("/patients") },
           { k: "History synced", v: s.mirrored.toLocaleString("en-IN"), d: `${pct}% fresh (24h)` },
           { k: "Guest import", v: s.lastRoster ? (s.lastRoster.status === "running" ? "Running" : fmtAgo(s.lastRoster.finishedAt || s.lastRoster.startedAt)) : "Never", d: s.lastRoster ? `${s.lastRoster.created} new · ${s.lastRoster.updated} updated · ${s.lastRoster.skipped} skipped` : "nightly 02:30", hot: s.rosterRunning },
           { k: "History import", v: s.detailsRunning ? `${detailRun?.processed ?? 0}/${detailRun?.total || "?"}` : runLabel(s.lastDetails), d: s.detailsRunning ? (detailRun?.mode === "full" ? "full supported record" : "rolling refresh") : "every 5 min, oldest first", hot: s.detailsRunning },
@@ -408,8 +408,8 @@ export function ClinicData() {
       {s && (
         <Card className="mb-4 p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <div><B>Import coverage by dataset</B><div className="text-[11.5px] text-ink3">A zero means not imported yet; an empty patient result still counts once Zenoti was checked.</div></div>
-            <Tag kind={s.mirrored === s.linkedUsers && s.withErrors === 0 ? "ok" : "warn"}>{s.mirrored}/{s.linkedUsers} patients checked</Tag>
+            <div><B>Import coverage by dataset</B><div className="text-[11.5px] text-ink3">A zero means not imported yet; an empty guest result still counts once Zenoti was checked.</div></div>
+            <Tag kind={s.mirrored === s.linkedUsers && s.withErrors === 0 ? "ok" : "warn"}>{s.mirrored}/{s.linkedUsers} guests checked</Tag>
           </div>
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {s.supportedDatasets.map((key) => {

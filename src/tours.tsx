@@ -30,7 +30,7 @@ const PANEL_TOURS: Record<string, Step[]> = {
   doctor: [
     C("Welcome, Dermatologist", "Everything a consultation needs — who is waiting, their history, the note, the prescription and the photos — on one tablet screen."),
     T("[data-tour=nav-my-day]", "Today", "Your guests in the order they arrive. The badge counts who is checked in and waiting. Tap Start when they come in."),
-    T("[data-tour=nav-my-patients]", "Patients", "Everyone under your care. Open a record for past consultations, photos, forms and packages."),
+    T("[data-tour=nav-my-patients]", "Guests", "Everyone under your care. Open a record for past consultations, photos, forms and packages."),
     T("[data-tour=nav-schedule]", "Schedule", "Your usual week and any leave. The app and the front desk offer exactly these hours."),
     T("[data-tour=nav-stock]", "Products", "What is on the shelf at your centre, before you prescribe it."),
     T("[data-tour=nav-profile]", "Your profile", "Your photo, bio and expertise as guests see them in the app."),
