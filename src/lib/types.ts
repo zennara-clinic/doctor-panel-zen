@@ -1033,6 +1033,21 @@ export type PrescriptionItem = {
 /** The printed prescription's layout. Metadata for the chooser lives with the Sign step. */
 export type RxTemplateKey = "classic" | "modern" | "minimal";
 
+/** One channel's outcome when the signed prescription was delivered. */
+export type PrescriptionDeliveryChannel = {
+  ok: boolean;
+  /** The address or number it went to; blank when the guest has none on file. */
+  to?: string | null;
+  error?: string | null;
+  at?: string | null;
+};
+
+/** Delivery of the signed PDF, per channel. Carried on the sign response and stored on the note. */
+export type PrescriptionDelivery = {
+  email?: PrescriptionDeliveryChannel | null;
+  whatsapp?: PrescriptionDeliveryChannel | null;
+};
+
 export type ConsultationNote = {
   /**
    * Which printed layout the guest receives (default "classic"). Changing it
@@ -1049,9 +1064,14 @@ export type ConsultationNote = {
   prescriptionSigned?: boolean;
   prescriptionSignedAt?: string | null;
   prescriptionSignedByName?: string | null;
-  /** Set once the signed prescription was emailed to the guest. */
+  /** Legacy stamps from the email-only send; newer APIs report `prescriptionDelivery` instead. */
   prescriptionEmailedAt?: string | null;
   prescriptionEmailedTo?: string | null;
+  /**
+   * How the signed PDF reached the guest. Signing delivers it automatically
+   * by WhatsApp and email — there is no manual send. Absent on older APIs.
+   */
+  prescriptionDelivery?: PrescriptionDelivery | null;
   _id: Id;
   bookingId: Id | Booking;
   userId: Id | User;

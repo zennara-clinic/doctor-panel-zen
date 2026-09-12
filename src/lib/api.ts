@@ -16,7 +16,7 @@ import type {
   DigitiseBody, DigitisedForm, FormOrigin, IntakeDetail, IntakeState, IntakeSummary, PreConsultSchema,
   PatientPhoto, ProductAvailability, ProductReview, ServiceCard, ServiceReview, ServiceType, SupportMessage, TaxonomyTree, User, Vendor,
   LifecycleAction, LifecycleState,
-  PrescriptionItem, RxFavourite, RxRecentItem, RxTemplateKey,
+  PrescriptionDelivery, PrescriptionItem, RxFavourite, RxRecentItem, RxTemplateKey,
 } from "./types";
 
 /**
@@ -51,6 +51,41 @@ async function requestText(path: string, query?: Query): Promise<string> {
     throw new ApiError("The server did not return a document", 502, text);
   }
   return text;
+}
+
+/**
+ * An authenticated GET that returns a binary file (the prescription PDF).
+ * A JSON 404 from an older API, or an HTML error page, is thrown with its
+ * status so the caller can fall back to the HTML render.
+ */
+async function requestBlob(path: string, accept: string, query?: Query): Promise<Blob> {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(query ?? {})) {
+    if (v === undefined || v === null || v === "") continue;
+    sp.append(k, String(v));
+  }
+  const qs = sp.toString();
+  const headers: Record<string, string> = { Accept: accept };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}${qs ? `?${qs}` : ""}`, { headers });
+  } catch (err) {
+    throw new ApiError("Cannot reach the Zennara API. Check your connection.", 0, err);
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    let message = `Request failed (${res.status})`;
+    try { message = (JSON.parse(text) as { message?: string })?.message || message; } catch { /* not JSON */ }
+    throw new ApiError(message, res.status, text);
+  }
+  const type = res.headers.get("content-type") ?? "";
+  if (!type.toLowerCase().includes(accept.toLowerCase())) {
+    throw new ApiError(`The server did not return ${accept}`, 502, await res.text());
+  }
+  const blob = await res.blob();
+  return blob.type ? blob : new Blob([blob], { type: accept });
 }
 
 /* ============================ auth ============================ */
@@ -716,16 +751,28 @@ export const consultationNotes = {
   forBooking: (bookingId: Id) => request<ConsultationNote | null>(`/consultation-notes/booking/${bookingId}`),
   save: (body: Partial<ConsultationNote> & { bookingId: Id }) =>
     request<ConsultationNote>("/consultation-notes", { method: "POST", body }),
-  /** The same save with its envelope: `prescriptionEmailed` says whether this sign sent the email. */
-  saveWithResult: (body: Partial<ConsultationNote> & { bookingId: Id }) =>
-    requestRaw<ConsultationNote>("/consultation-notes", { method: "POST", body }) as Promise<Envelope<ConsultationNote> & { prescriptionEmailed?: boolean; message?: string }>,
-  /** Email the signed prescription to the guest (first send or resend). */
-  send: (id: Id) => requestRaw(`/consultation-notes/${id}/send`, { method: "POST", body: {} }),
   /**
-   * The complete branded prescription as the guest receives it, rendered by
-   * the server. `template` previews a layout other than the stored one;
-   * `draft` forces the "preview — not signed" ribbon. Throws on an API that
-   * does not have the endpoint yet.
+   * The same save with its envelope. Signing delivers the PDF to the guest by
+   * WhatsApp and email automatically: `delivery` reports each channel and
+   * `message` describes what was sent. Older APIs return `prescriptionEmailed`
+   * instead. There is no manual send.
+   */
+  saveWithResult: (body: Partial<ConsultationNote> & { bookingId: Id }) =>
+    requestRaw<ConsultationNote>("/consultation-notes", { method: "POST", body }) as Promise<Envelope<ConsultationNote> & {
+      delivery?: PrescriptionDelivery | null; prescriptionEmailed?: boolean; message?: string;
+    }>,
+  /**
+   * The real branded prescription PDF — the document the guest receives.
+   * `template` previews a layout other than the stored one; `draft` forces
+   * the "preview — not signed" ribbon. Throws (with the HTTP status) on an
+   * API that does not have the endpoint yet, so callers can fall back to
+   * `prescriptionHtml`.
+   */
+  prescriptionPdf: (id: Id, opts: { template?: RxTemplateKey; draft?: boolean } = {}) =>
+    requestBlob(`/consultation-notes/${id}/prescription.pdf`, "application/pdf", { template: opts.template, draft: opts.draft ? 1 : undefined }),
+  /**
+   * The prescription as HTML, rendered by the server. The fallback when the
+   * PDF endpoint is unavailable. Throws on an API without the endpoint.
    */
   prescriptionHtml: (id: Id, opts: { template?: RxTemplateKey; draft?: boolean } = {}) =>
     requestText(`/consultation-notes/${id}/prescription.html`, { template: opts.template, draft: opts.draft ? 1 : undefined }),

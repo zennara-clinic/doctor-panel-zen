@@ -675,6 +675,13 @@
   .dz-rxframe__doc { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
   .dz-rxframe__busy { position: absolute; top: 12px; left: 12px; z-index: 1; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-ink2); font-size: 13px; font-weight: 650; }
   .dz-rxframe__busy svg { width: 15px; height: 15px; }
+  /* How the signed prescription went out — one line per channel, on the signed panel. */
+  .dz-delivery { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; font-weight: 600; color: var(--color-ink2); }
+  .dz-delivery__ch { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; }
+  .dz-delivery__ch svg { width: 15px; height: 15px; flex: none; }
+  .dz-delivery__ch.is-ok { color: var(--color-ok); }
+  .dz-delivery__ch.is-failed { color: var(--color-warn); }
+  .dz-delivery__ch.is-none { color: var(--color-ink3); }
   .dz-rxframe__hint { position: absolute; top: 12px; right: 12px; z-index: 1; max-width: 60%; padding: 8px 12px; border: 1px solid var(--color-warn); border-radius: 12px; background: var(--color-warn-bg); color: var(--color-warn); font-size: 12.5px; font-weight: 650; }
   @media (max-width: 760px) {
     .dz-rxframe { aspect-ratio: auto; height: 70dvh; }

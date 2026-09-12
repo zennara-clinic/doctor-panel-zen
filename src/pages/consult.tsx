@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle, Camera, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, ClipboardList, Download,
-  FileSignature, FileText, History, Loader2, Mail, Minus, NotebookPen, Package, PenLine, Pencil, Pill, Play,
+  FileSignature, FileText, History, Loader2, Mail, MessageCircle, Minus, NotebookPen, Package, PenLine, Pencil, Pill, Play,
   Plus, Printer, Search, ShieldCheck, Sparkles, Stethoscope, Trash2, UserRound,
 } from "lucide-react";
 import api from "../lib/api";
@@ -20,7 +20,7 @@ import { VisitMenu, VisitStatus, useVisitRunner, visitTime } from "../visit";
 import {
   addClinicDays, ageFrom, bookingServiceName, fmtAgo, fmtDate, fmtDateLong, fmtDateTime, guestCodeOf, idOf, initials, isoDay,
 } from "../lib/format";
-import type { Booking, ConsultationNote, Consultation, FormOrigin, IntakeState, PackageAssignment, PreConsultForm, PrescriptionItem, RxTemplateKey, User } from "../lib/types";
+import type { Booking, ConsultationNote, Consultation, FormOrigin, IntakeState, PackageAssignment, PreConsultForm, PrescriptionDelivery, PrescriptionItem, RxTemplateKey, User } from "../lib/types";
 import logo from "../assets/zennara-logo.png";
 
 /*
@@ -569,7 +569,7 @@ function Workspace({ bookingId }: { bookingId: string }) {
                 doctorName={doctorName} photosCount={photosCount} dirty={dirty}
                 onGo={goStep} onSaveDraft={() => saveDraft(false)}
                 onSigned={(saved) => { note.setData(saved); setDirty(false); setEditingSigned(false); setSaveState("idle"); }}
-                beforeSign={beforeSign} afterSign={afterSign} reloadNote={note.reload}
+                beforeSign={beforeSign} afterSign={afterSign}
                 runner={runner} reloadVisit={reloadVisit}
                 onFollowUp={(date) => update({ followUpDate: date })} onTemplate={setTemplate} />
             )}
@@ -885,8 +885,46 @@ function TreatmentsPanel({ assigned, locked, packages, onChange }: {
 
 /* -------------------------------------------------------------------- sign */
 
-function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName, photosCount, dirty, onGo, onSaveDraft, onSigned, runner, reloadVisit, onFollowUp, onTemplate, beforeSign, afterSign, reloadNote }: {
-  beforeSign: () => Promise<void>; afterSign: () => void; reloadNote: () => void; onTemplate: (t: RxTemplateKey) => void;
+/** The prescription document the preview holds: the server's PDF, or its HTML on an older API. */
+type RxDoc = { kind: "pdf"; blob: Blob; url: string } | { kind: "html"; html: string };
+
+/** One line on how the signed PDF went out — for the toast and the signed panel. */
+function describeDelivery(d: PrescriptionDelivery): string {
+  const wa = d.whatsapp, em = d.email;
+  const waOk = wa?.ok === true, emOk = em?.ok === true;
+  const missing = (c: PrescriptionDelivery["email"], what: string) => (!c?.to ? `no ${what} on file` : `${what} failed`);
+  if (waOk && emOk) return "sent by WhatsApp and email";
+  if (waOk) return `WhatsApp sent; ${missing(em, "email")}`;
+  if (emOk) return `emailed; ${missing(wa, "WhatsApp number")}`;
+  return "delivery failed, the guest can still open it in the app";
+}
+
+/** The delivery outcome stored on the note; the legacy email stamp on an older API. */
+function DeliveryLine({ note }: { note: ConsultationNote | null }) {
+  const d = note?.prescriptionDelivery;
+  if (!d) {
+    if (!note?.prescriptionEmailedAt) return null;
+    return (
+      <div className="dz-delivery">
+        <span className="dz-delivery__ch is-ok"><Mail />Emailed to {note.prescriptionEmailedTo ?? "the guest"} · {fmtAgo(note.prescriptionEmailedAt)} ago</span>
+      </div>
+    );
+  }
+  const channel = (c: PrescriptionDelivery["email"], icon: ReactNode, name: string, what: string) => {
+    if (c?.ok) return <span className="dz-delivery__ch is-ok">{icon}{name} sent{c.to ? ` to ${c.to}` : ""}{c.at ? ` · ${fmtAgo(c.at)} ago` : ""}</span>;
+    if (!c?.to) return <span className="dz-delivery__ch is-none">{icon}No {what} on file</span>;
+    return <span className="dz-delivery__ch is-failed" title={c.error ?? undefined}>{icon}{name} to {c.to} failed{c.error ? ` — ${c.error}` : ""}</span>;
+  };
+  return (
+    <div className="dz-delivery" aria-label="Prescription delivery">
+      {channel(d.whatsapp, <MessageCircle />, "WhatsApp", "WhatsApp number")}
+      {channel(d.email, <Mail />, "Email", "email")}
+    </div>
+  );
+}
+
+function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName, photosCount, dirty, onGo, onSaveDraft, onSigned, runner, reloadVisit, onFollowUp, onTemplate, beforeSign, afterSign }: {
+  beforeSign: () => Promise<void>; afterSign: () => void; onTemplate: (t: RxTemplateKey) => void;
   bk: Booking; patient: User | null | undefined; form: PreConsultForm | null; draft: Draft; note: ConsultationNote | null;
   signed: boolean; editing: boolean; doctorName: string; photosCount: number; dirty: boolean;
   onGo: (s: Step) => void; onSaveDraft: () => void; onSigned: (n: ConsultationNote) => void;
@@ -899,34 +937,48 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [closeFailed, setCloseFailed] = useState(false);
-  const [sending, setSending] = useState(false);
   const [noFollowUp, setNoFollowUp] = useState(bk.followUp?.required === false && !draft.followUpDate);
   const [customDate, setCustomDate] = useState(false);
   const sheetRef = useRef<HTMLElement | null>(null);
 
   /*
-   * The printed document, rendered by the server — the very file the guest
-   * gets by email. Fetched again when the layout changes or a save lands
+   * The printed document, rendered by the server — the very PDF the guest
+   * receives. Fetched again when the layout changes or a save lands
    * (`updatedAt`). Until the draft has been saved once there is nothing to
-   * render; on an API without the endpoint the panel's own sheet stays.
+   * render. The chain: the PDF; failing that (an older API, a render error)
+   * the server's HTML; failing that the panel's own sheet — never a blank.
    */
   const previewSigned = signed && !editing;
   const noteId = note?._id ?? null;
-  const [rx, setRx] = useState<{ html: string | null; state: "idle" | "loading" | "ready" | "unavailable" | "failed" }>(() => ({ html: null, state: noteId ? "loading" : "idle" }));
+  const [rx, setRx] = useState<{ doc: RxDoc | null; state: "idle" | "loading" | "ready" | "unavailable" | "failed" }>(() => ({ doc: null, state: noteId ? "loading" : "idle" }));
   useEffect(() => {
-    if (!noteId) { setRx({ html: null, state: "idle" }); return; }
+    if (!noteId) { setRx({ doc: null, state: "idle" }); return; }
     let live = true;
     setRx((r) => ({ ...r, state: "loading" }));
-    api.consultationNotes.prescriptionHtml(noteId, { template: draft.prescriptionTemplate, draft: !previewSigned })
-      .then((html) => { if (live) setRx({ html, state: "ready" }); })
+    const opts = { template: draft.prescriptionTemplate, draft: !previewSigned };
+    (async (): Promise<RxDoc> => {
+      try {
+        const blob = await api.consultationNotes.prescriptionPdf(noteId, opts);
+        return { kind: "pdf", blob, url: URL.createObjectURL(blob) };
+      } catch {
+        return { kind: "html", html: await api.consultationNotes.prescriptionHtml(noteId, opts) };
+      }
+    })()
+      .then((doc) => {
+        if (!live) { if (doc.kind === "pdf") URL.revokeObjectURL(doc.url); return; }
+        setRx({ doc, state: "ready" });
+      })
       .catch((e) => {
         if (!live) return;
         const status = (e as { status?: number }).status;
-        setRx((r) => ({ html: r.html, state: status === 404 || status === 0 ? "unavailable" : "failed" }));
+        setRx((r) => ({ doc: r.doc, state: status === 404 || status === 0 ? "unavailable" : "failed" }));
       });
     return () => { live = false; };
   }, [noteId, note?.updatedAt, draft.prescriptionTemplate, previewSigned]);
-  const serverHtml = rx.state === "ready" || (rx.state === "loading" && rx.html) ? rx.html : null;
+  // The object URL lives exactly as long as the document it shows.
+  const pdfUrl = rx.doc?.kind === "pdf" ? rx.doc.url : null;
+  useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); }, [pdfUrl]);
+  const serverDoc = rx.state === "ready" || (rx.state === "loading" && rx.doc) ? rx.doc : null;
 
   const chosen = FOLLOW_UPS.find((c) => draft.followUpDate === addClinicDays(today, c.days))?.key ?? (draft.followUpDate ? "date" : noFollowUp ? "none" : "");
   // Treatments or advice alone are a legitimate note to sign.
@@ -938,7 +990,7 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
     setBusy(true); setErr(null); setCloseFailed(false);
     await beforeSign();
     let saved: ConsultationNote;
-    let emailed = false;
+    let sentToast = "Signed — the prescription is on the guest’s app";
     try {
       const res = await api.consultationNotes.saveWithResult({
         bookingId: bk._id,
@@ -953,8 +1005,10 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
       if (!res.data) throw new Error(res.message || "The note could not be signed");
       saved = res.data;
       rememberTemplate(draft.prescriptionTemplate);
-      // Whether THIS sign sent the email — a re-sign must not reuse an old stamp.
-      emailed = res.prescriptionEmailed === true;
+      // What THIS sign delivered — a re-sign must not reuse an old stamp.
+      if (res.delivery) sentToast = `Signed — ${describeDelivery(res.delivery)}`;
+      else if (res.prescriptionEmailed === true) sentToast = `Signed — prescription emailed to ${saved.prescriptionEmailedTo ?? "the guest"}`;
+      else if (res.message && /sent|whatsapp|email/i.test(res.message)) sentToast = `Signed — ${res.message}`;
       onSigned(saved);
     } catch (e) {
       setErr((e as Error).message);
@@ -975,35 +1029,55 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
     else if (draft.followUpDate) stages.push({ stage: "follow_up_required", followUp: { required: true, dueDate: draft.followUpDate, notes: "" } });
     for (const s of stages) await api.bookings.setStage(bk._id, s).catch(() => undefined);
 
-    toast(emailed ? `Signed — prescription emailed to ${saved.prescriptionEmailedTo ?? "the guest"}` : "Signed — the prescription is on the guest’s app");
+    toast(sentToast);
     reloadVisit();
     afterSign();
     setBusy(false);
   };
 
-  /** The server's document when we have it; otherwise the panel's own sheet, as before. */
+  /** The server's HTML when that is what we have; otherwise the panel's own sheet, as before. */
   const documentHtml = () => {
-    if (serverHtml) return serverHtml;
+    if (serverDoc?.kind === "html") return serverDoc.html;
     const el = sheetRef.current;
     if (!el) return null;
     const html = el.outerHTML.replace(/src="([^"]*zennara-logo[^"]*)"/, (_, src) => `src="${new URL(src, window.location.href).href}"`);
     return `<!doctype html><html><head><meta charset="utf-8"><title>Prescription — ${patient?.fullName ?? bk.fullName}</title><style>${RX_FILE_CSS}</style></head><body>${html}</body></html>`;
   };
+  const fileStem = `prescription-${(patient?.fullName ?? bk.fullName).toLowerCase().replace(/\s+/g, "-")}-${today}`;
   const download = () => {
-    const doc = documentHtml();
-    if (!doc) return;
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([doc], { type: "text/html" }));
-    a.download = `prescription-${(patient?.fullName ?? bk.fullName).toLowerCase().replace(/\s+/g, "-")}-${today}.html`;
+    if (serverDoc?.kind === "pdf") {
+      // A URL of its own: the preview's is revoked whenever the document changes.
+      a.href = URL.createObjectURL(serverDoc.blob);
+      a.download = `${fileStem}.pdf`;
+    } else {
+      const doc = documentHtml();
+      if (!doc) return;
+      a.href = URL.createObjectURL(new Blob([doc], { type: "text/html" }));
+      a.download = `${fileStem}.html`;
+    }
     a.click();
+    window.setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
   };
   const print = () => {
+    if (serverDoc?.kind === "pdf") {
+      // The browser's PDF viewer handles the print itself; ask once it has the file.
+      const url = URL.createObjectURL(serverDoc.blob);
+      const w = window.open(url, "_blank");
+      if (!w) { URL.revokeObjectURL(url); toast("Allow pop-ups for this site to print the prescription"); return; }
+      let asked = false;
+      const go = () => { if (asked) return; asked = true; try { w.focus(); w.print(); } catch { /* the viewer has its own print button */ } };
+      w.addEventListener("load", () => window.setTimeout(go, 400), { once: true });
+      window.setTimeout(go, 1500);
+      window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
+      return;
+    }
     // Without the server's document the sheet on this page prints (the .dz-print rule).
-    if (!serverHtml) { window.print(); return; }
+    if (serverDoc?.kind !== "html") { window.print(); return; }
     const w = window.open("", "_blank");
     if (!w) { toast("Allow pop-ups for this site to print the prescription"); return; }
     w.document.open();
-    w.document.write(serverHtml);
+    w.document.write(serverDoc.html);
     w.document.close();
     const go = () => { w.focus(); w.print(); };
     // Let the document's fonts and logo land before the print dialog snapshots it.
@@ -1026,22 +1100,13 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
           sub={`${note?.prescriptionSignedByName ?? note?.doctorName ?? doctorName} · ${fmtDateTime(note?.prescriptionSignedAt ?? note?.completedAt)}`}>
           <div className="dz-stack">
             <div className="dz-row">
-              {note?.prescriptionEmailedAt
-                ? <span className="dz-pill dz-pill--ok"><Mail />Emailed to {note.prescriptionEmailedTo ?? "the guest"} · {fmtAgo(note.prescriptionEmailedAt)} ago</span>
-                : <span className="dz-pill dz-pill--line">On the guest’s app</span>}
+              <span className="dz-pill dz-pill--line">On the guest’s app</span>
               {note?.followUpDate && <span className="dz-pill"><History />Review on {fmtDate(note.followUpDate)}</span>}
             </div>
+            <DeliveryLine note={note} />
             <div className="dz-row">
-              <Btn onClick={print}><Printer />Print or save PDF</Btn>
-              <Btn kind="secondary" onClick={download}><Download />Download</Btn>
-              {!!note?.prescription?.length && (
-                <Btn kind="secondary" disabled={sending} onClick={async () => {
-                  if (!note) return;
-                  setSending(true);
-                  try { const r = await api.consultationNotes.send(note._id); toast((r.message as string) ?? "Prescription emailed"); reloadNote(); }
-                  catch (e) { toast((e as Error).message); } finally { setSending(false); }
-                }}><Mail />{sending ? "Sending…" : note?.prescriptionEmailedAt ? "Email again" : "Email to guest"}</Btn>
-              )}
+              <Btn onClick={print}><Printer />Print</Btn>
+              <Btn kind="secondary" onClick={download}><Download />{serverDoc?.kind === "pdf" ? "Download PDF" : "Download"}</Btn>
             </div>
             {bk.status === "In Progress" && (
               <Note kind="warn" className="my-0">The visit is still open.{" "}
@@ -1054,7 +1119,7 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
       ) : (
         <div data-tour="sign-step">
           <Panel icon={<FileSignature />} title={editing ? "Sign again" : "Sign and finish"}
-            sub="Signing locks the note and sends the prescription to the guest’s app and email.">
+            sub="Signing locks the note and sends the prescription PDF to the guest by WhatsApp and email — nothing to send by hand.">
             <div className="dz-grid-even">
               <div>
                 {checks.map((c) => (
@@ -1126,7 +1191,7 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
       <div className="dz-layoutpick" role="radiogroup" aria-label="Prescription layout">
         <div className="dz-layoutpick__head">
           <b>Prescription layout</b>
-          <span className="dz-hint">How the guest's copy is laid out — on email, in the app and on paper.</span>
+          <span className="dz-hint">How the guest's copy is laid out — on WhatsApp, email, in the app and on paper.</span>
         </div>
         <div className="dz-layoutpick__cards">
           {RX_TEMPLATES.map((t) => {
@@ -1143,11 +1208,14 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
         </div>
       </div>
 
-      {serverHtml ? (
+      {serverDoc ? (
         <div className="dz-rxframe">
           {rx.state === "loading" && <div className="dz-rxframe__busy"><Loader2 className="animate-spin" />Rendering the {RX_TEMPLATES.find((t) => t.key === draft.prescriptionTemplate)?.name.toLowerCase()} layout…</div>}
           {dirty && !previewSigned && <div className="dz-rxframe__hint">The preview shows the last saved draft — save to bring it up to date.</div>}
-          <iframe className="dz-rxframe__doc" title="Prescription preview" srcDoc={serverHtml} sandbox="" />
+          {serverDoc.kind === "pdf"
+            // The browser renders the PDF inline; a sandboxed frame would show it blank.
+            ? <iframe key={serverDoc.url} className="dz-rxframe__doc" title="Prescription preview" src={`${serverDoc.url}#toolbar=0&navpanes=0&view=FitH`} />
+            : <iframe className="dz-rxframe__doc" title="Prescription preview" srcDoc={serverDoc.html} sandbox="" />}
         </div>
       ) : noteId && rx.state === "loading" ? (
         <div className="dz-rxframe"><div className="dz-rxframe__busy"><Loader2 className="animate-spin" />Rendering the printed layout…</div></div>
