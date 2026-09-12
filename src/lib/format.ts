@@ -275,6 +275,17 @@ export function isConsultationBooking(b: Booking): boolean {
 export const bookingProvider = (b: Booking) => b.specialistName || b.therapistName || b.specialistTier || "Not assigned";
 
 /* ---------------- ids & names ---------------- */
+/**
+ * The guest's human-readable id — "Guest code" wherever staff can see it.
+ *
+ * `guestCode` is Zenoti's own Guest Code, which is what the clinic prints on
+ * paper and quotes at the desk. `patientId` is the locally generated id it
+ * replaced, kept only as a fallback for the few guests Zenoti has no code for.
+ */
+export const guestCodeOf = (
+  g: { guestCode?: string | null; patientId?: string | null } | null | undefined,
+): string => g?.guestCode || g?.patientId || "";
+
 export function idOf(v: unknown): Id | "" {
   if (!v) return "";
   if (typeof v === "string") return v;

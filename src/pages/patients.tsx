@@ -18,7 +18,7 @@ import { PackageCard, PackageLine as PackageSummary, PackagesFreshness, useGuest
 import { NewBookingModal } from "./reception";
 import { appointmentState, fmtZDate, fmtZWhen, membershipActive } from "./zenoti";
 import {
-  ageFrom, bookingServiceName, fmtDate, fmtDateLong, fmtWhen, idOf, initials, isoDay,
+  ageFrom, bookingServiceName, fmtDate, fmtDateLong, fmtWhen, guestCodeOf, idOf, initials, isoDay,
 } from "../lib/format";
 import type { Doctor, PreConsultForm, User } from "../lib/types";
 import { ApiError } from "../lib/http";
@@ -84,7 +84,7 @@ export function MyPatients() {
       <div className="dz-row mb-4">
         <div className="dz-searchbox" style={{ flex: "1 1 280px", maxWidth: 480 }}>
           <Search />
-          <input className="dz-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, phone or guest ID" />
+          <input className="dz-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, phone or guest code" />
         </div>
         <Segmented value={filter} onChange={setFilter} options={[
           { key: "all", label: "All", count: counts.all },
@@ -115,7 +115,7 @@ export function MyPatients() {
                       {p.nextVisit && <span className="dz-pill dz-pill--sm">Next: {fmtWhen(p.nextVisit)}</span>}
                     </span>
                     <span className="dz-prow__sub">
-                      {[p.patientId, [ageFrom(p.dateOfBirth) ? `${ageFrom(p.dateOfBirth)} yrs` : null, p.gender].filter(Boolean).join(" "), p.services.slice(0, 3).join(" · ")].filter(Boolean).join(" · ") || "—"}
+                      {[guestCodeOf(p), [ageFrom(p.dateOfBirth) ? `${ageFrom(p.dateOfBirth)} yrs` : null, p.gender].filter(Boolean).join(" "), p.services.slice(0, 3).join(" · ")].filter(Boolean).join(" · ") || "—"}
                     </span>
                   </span>
                   <span className="dz-prow__side">
@@ -155,7 +155,7 @@ async function patientsInBrowser(doctor: Doctor, o: { term: string; filter: "all
     const u = typeof b.userId === "object" ? (b.userId as User) : null;
     const whenIso = b.eventAt || b.confirmedDate || b.preferredDate;
     const when = new Date(whenIso).getTime();
-    const row = byUser.get(id) ?? { userId: id, fullName: u?.fullName || b.fullName, phone: u?.phone ?? b.mobileNumber, patientId: u?.patientId ?? null, bookings: 0, visits: 0, services: [], recency: 0 };
+    const row = byUser.get(id) ?? { userId: id, fullName: u?.fullName || b.fullName, phone: u?.phone ?? b.mobileNumber, guestCode: u?.guestCode ?? null, patientId: u?.patientId ?? null, bookings: 0, visits: 0, services: [], recency: 0 };
     row.bookings += 1;
     if (b.status === "Completed") { row.visits += 1; if (!row.lastVisit || when > new Date(row.lastVisit).getTime()) row.lastVisit = whenIso; }
     if (b.status !== "Cancelled" && when <= now && (!row.lastBooked || when > new Date(row.lastBooked).getTime())) row.lastBooked = whenIso;
@@ -166,7 +166,7 @@ async function patientsInBrowser(doctor: Doctor, o: { term: string; filter: "all
   }
   let rows = [...byUser.values()].map((r) => ({ ...r, recency: new Date(r.lastBooked || r.nextVisit || 0).getTime() }));
   const counts = { all: 0, booked: 0, unbooked: 0 };
-  if (o.term) { const t = o.term.toLowerCase(); rows = rows.filter((r) => [r.fullName, r.phone, r.patientId].some((v) => String(v ?? "").toLowerCase().includes(t))); }
+  if (o.term) { const t = o.term.toLowerCase(); rows = rows.filter((r) => [r.fullName, r.phone, guestCodeOf(r)].some((v) => String(v ?? "").toLowerCase().includes(t))); }
   counts.all = rows.length; counts.booked = rows.filter((r) => r.nextVisit).length; counts.unbooked = counts.all - counts.booked;
   if (o.filter !== "all") rows = rows.filter((r) => (o.filter === "booked" ? !!r.nextVisit : !r.nextVisit));
   const sorters: Record<PatientSort, (a: typeof rows[number], b: typeof rows[number]) => number> = {
@@ -260,7 +260,7 @@ export function PatientRecord() {
                   <div className="min-w-0">
                     <h1 className="dz-title">{p.fullName}</h1>
                     <div className="dz-sub">
-                      {[age ? `${age} yrs` : null, p.gender, p.patientId ? `ID ${p.patientId}` : null, p.memberType === "Zen Member" ? "Zen Member" : null].filter(Boolean).join(" · ")}
+                      {[age ? `${age} yrs` : null, p.gender, guestCodeOf(p) ? `Guest code ${guestCodeOf(p)}` : null, p.memberType === "Zen Member" ? "Zen Member" : null].filter(Boolean).join(" · ")}
                     </div>
                   </div>
                 </div>

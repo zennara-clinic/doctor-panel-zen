@@ -833,6 +833,7 @@ export type MyPatient = {
   userId: Id;
   fullName: string;
   phone?: string | null;
+  guestCode?: string | null;
   patientId?: string | null;
   gender?: string | null;
   dateOfBirth?: string | null;

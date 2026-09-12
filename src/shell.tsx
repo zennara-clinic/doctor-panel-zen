@@ -11,7 +11,7 @@ import { useMyDoctor } from "./lib/useMe";
 import { Menu } from "./ui";
 import api from "./lib/api";
 import { useApi, useBookingUpdates, useDebounced, usePoll } from "./lib/useApi";
-import { initials, isoDay } from "./lib/format";
+import { guestCodeOf, initials, isoDay } from "./lib/format";
 import type { Admin } from "./lib/types";
 import { API_BASE, ApiError } from "./lib/http";
 import logo from "./assets/zennara-logo.png";
@@ -78,10 +78,10 @@ function SearchOverlay() {
 
   const results = useApi(async () => {
     const term = debounced.trim();
-    if (!searchOpen || term.length < 2) return [] as { _id: string; fullName: string; phone: string; patientId?: string; location?: string }[];
+    if (!searchOpen || term.length < 2) return [] as { _id: string; fullName: string; phone: string; guestCode?: string | null; patientId?: string; location?: string }[];
     const res = await api.patients.list({ search: term, limit: 8 }).catch(() => ({} as { data?: { users?: unknown[] } }));
     const users = (res as { data?: { users?: unknown[] } }).data?.users ?? [];
-    return users.slice(0, 8) as { _id: string; fullName: string; phone: string; patientId?: string; location?: string }[];
+    return users.slice(0, 8) as { _id: string; fullName: string; phone: string; guestCode?: string | null; patientId?: string; location?: string }[];
   }, [debounced, searchOpen]);
 
   if (!searchOpen) return null;
@@ -93,7 +93,7 @@ function SearchOverlay() {
       <div className="dz-spotlight" role="dialog" aria-label="Search guests">
         <div className="dz-spotlight__bar">
           <Search />
-          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search guests booked with you — name or ID" />
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search guests booked with you — name or guest code" />
           {results.loading && q.trim().length >= 2 && <Loader2 className="h-5 w-5 animate-spin text-ink3" />}
           <button type="button" className="dz-btn dz-btn--ghost dz-btn--sm" onClick={() => setSearchOpen(false)}>Close</button>
         </div>
@@ -107,7 +107,7 @@ function SearchOverlay() {
               <span className="dz-avatar dz-avatar--sage">{initials(p.fullName)}</span>
               <span className="min-w-0">
                 <span className="dz-prow__name">{p.fullName}</span>
-                <span className="dz-prow__sub">{[p.patientId, p.location].filter(Boolean).join(" · ")}</span>
+                <span className="dz-prow__sub">{[guestCodeOf(p), p.location].filter(Boolean).join(" · ")}</span>
               </span>
               <ChevronRight />
             </button>

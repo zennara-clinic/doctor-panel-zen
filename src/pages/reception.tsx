@@ -15,7 +15,7 @@ import { useApi, useBookingUpdates, useDebounced, useMutation, usePoll } from ".
 import { useQueryNumber, useQueryPage, useQueryString } from "../lib/useListState";
 import { CLINIC_TZ,
   ageFrom, bookingProvider, bookingServiceName, bookingSlotDate, bookingSlotLabel, bookingSource, fmtAgo, fmtCompactINR,
-  fmtDate, fmtDateFull, fmtINR, fmtWhen, idOf, initials, isoDay, isVip, nameOf, patientFlags, pct,
+  fmtDate, fmtDateFull, fmtINR, fmtWhen, guestCodeOf, idOf, initials, isoDay, isVip, nameOf, patientFlags, pct,
   statusKey, mapToRows, isConsultationBooking, clinicHM, addClinicDays, clinicMonthEnd,
   clinicMonthStart, clinicWeekday, dayKeyDate, fmtDayKey,
 } from "../lib/format";
@@ -1010,7 +1010,7 @@ const EMPTY_BF: BookingFilters = {
   amountMin: "", amountMax: "", sortBy: "date", sortOrder: "desc",
 };
 const BOOKING_SORTS: [string, string][] = [["date", "Appointment date"], ["createdAt", "Booked on"], ["amount", "Amount"], ["name", "Guest name"], ["status", "Status"], ["checkIn", "Check-in time"]];
-const BOOKING_EXPORT_COLS = ["Reference", "Guest", "Patient ID", "Phone", "Email", "Membership", "Service", "Category", "Kind", "Centre", "Date", "Time", "Status", "Dermatologist", "Therapist", "Room",
+const BOOKING_EXPORT_COLS = ["Reference", "Guest", "Guest code", "Phone", "Email", "Membership", "Service", "Category", "Kind", "Centre", "Date", "Time", "Status", "Dermatologist", "Therapist", "Room",
   "Source", "Package", "Amount", "Payment Status", "Payment Method", "Paid At", "Checked In", "Checked Out", "Session Minutes", "Rating", "Cancellation Reason", "Booked On", "Notes"];
 
 function bookingQuery(f: BookingFilters): Record<string, string | number> {
@@ -1370,7 +1370,7 @@ const EMPTY_PF: PatientFilters = {
 const PATIENT_SORTS: [string, string][] = [
   ["createdAt", "Joined"], ["name", "Name"], ["visits", "Visits"], ["spend", "Spend"], ["lastLogin", "Last login"], ["dob", "Age"], ["zenExpiry", "Zen expiry"],
 ];
-const PATIENT_EXPORT_COLS = ["Patient ID", "Full Name", "Email", "Phone", "Centre", "Source", "Member Type", "Zen Since", "Zen Expires", "Gender", "Date of Birth", "Age",
+const PATIENT_EXPORT_COLS = ["Guest code", "Full Name", "Email", "Phone", "Centre", "Source", "Member Type", "Zen Since", "Zen Expires", "Gender", "Date of Birth", "Age",
   "Total Visits", "Total Spent", "App Opens", "Drug Allergies", "Medical History", "Smoking", "Drinking", "Active", "Verified", "Registered On", "Last Login"];
 
 /** Turn the filter state into query params; blanks are dropped. */
@@ -1468,7 +1468,7 @@ export function Patients() {
       <Hint id="patients-live">Click any row to open the full record — visits, packages, forms, orders and consents. Use Filters to slice by centre, age, membership, visits, spend, treatments had, or lapsed guests; Export honours the same filters.</Hint>
 
       <div className="mb-3">
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, phone, email or guest ID…"
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, phone, email or guest code…"
           className="w-full max-w-[420px] rounded-(--radius-btn) border border-border bg-surface px-3.5 py-2 text-[13px] outline-none focus:border-gold-dark" />
       </div>
       <ActiveFilters items={chips} onClear={() => clear({ ...EMPTY_PF, sortBy: applied.sortBy, sortOrder: applied.sortOrder })} />
@@ -1481,14 +1481,14 @@ export function Patients() {
         ) : (
           <>
             <DataTable
-              cols={["Guest", "Guest ID", "Phone", "Centre", "Source", "Joined", "Visits", "Spend", "Membership", "Flags"]}
+              cols={["Guest", "Guest code", "Phone", "Centre", "Source", "Joined", "Visits", "Spend", "Membership", "Flags"]}
               onRow={(i) => nav("/patient", { state: { id: users[i]._id } })}
               rows={users.map((p) => {
                 const flags = patientFlags(p);
                 const age = ageFrom(p.dateOfBirth);
                 return [
                   <B key={p._id}>{p.fullName}{age ? ` · ${age}${(p.gender ?? "")[0] ?? ""}` : ""}</B>,
-                  <span key={`${p._id}i`} className="font-mono text-[11px] text-ink3">{p.patientId ?? "—"}</span>,
+                  <span key={`${p._id}i`} className="font-mono text-[11px] text-ink3">{guestCodeOf(p) || "—"}</span>,
                   p.phone,
                   p.location ?? "—",
                   p.source === "zenoti" ? <Tag key={`${p._id}src`} kind="info">Clinic</Tag> : p.source === "reception" ? <Tag key={`${p._id}src`} kind="gold">Walk-in</Tag> : <Tag key={`${p._id}src`} kind="mute">App</Tag>,
@@ -1625,7 +1625,7 @@ function NewPatientModal({ open, onClose, onCreated }: {
         <Sel label="Gender" value={f.gender} onChange={set("gender")} options={["Male", "Female", "Other"]} />
         <Sel label="Home centre" value={f.location} onChange={set("location")} options={branches.map((b) => b.name)} />
       </div>
-      <Note>A guest ID is generated automatically. If this email or number is already on file the server will say so rather than creating a duplicate.</Note>
+      <Note>A guest code is generated automatically. If this email or number is already on file the server will say so rather than creating a duplicate.</Note>
       {err && <Note kind="crit">{err}</Note>}
       <div className="mt-3 flex justify-end gap-2">
         <Btn kind="ghost" onClick={onClose}>Cancel</Btn>
@@ -1881,7 +1881,7 @@ export function PatientDetail() {
           <Page title={p.fullName}
             sub={[
               age ? `${age} ${p.gender ?? ""}`.trim() : p.gender,
-              p.phone, p.location, p.patientId ? `ID ${p.patientId}` : "",
+              p.phone, p.location, guestCodeOf(p) ? `Guest code ${guestCodeOf(p)}` : "",
               `${p.totalVisits ?? 0} visits`,
               p.source === "zenoti" ? "Clinic guest" : "App sign-up",
               zd?.syncedAt ? `clinic data ${fmtAgo(zd.syncedAt)}` : "",
@@ -1933,7 +1933,6 @@ export function PatientDetail() {
                 {zProfile && (
                   <Card className="p-4"><SecH t="Clinic profile" right={<Tag kind="info">Zenoti</Tag>} />
                     <div className="grid gap-1.5 text-[12px] text-ink2">
-                      {zProfile.code && <div>Guest code <B>{zProfile.code}</B></div>}
                       {zProfile.preferredName && <div>Preferred name <B>{zProfile.preferredName}</B></div>}
                       {zProfile.memberSince && <div>Clinic guest since <B>{fmtZDate(zProfile.memberSince)}</B></div>}
                       {zProfile.address && (zProfile.address.line1 || zProfile.address.city) && <div>Address <B>{[zProfile.address.line1, zProfile.address.city, zProfile.address.zip].filter(Boolean).join(", ")}</B></div>}
@@ -2204,7 +2203,7 @@ export function PatientPickerModal({ open, onClose, onPick, title = "Choose a gu
   useEffect(() => { if (open) setTerm(""); }, [open]);
   return (
     <Modal open={open} onClose={onClose} title={title}>
-      <input autoFocus value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Type a name, phone, email or guest ID…"
+      <input autoFocus value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Type a name, phone, email or guest code…"
         className="w-full rounded-lg border border-border bg-ivory px-3 py-2 text-[13px] outline-none focus:border-gold-dark" />
       <div className="mt-2 max-h-[320px] overflow-y-auto">
         {debounced.length < 2 ? <div className="px-1 py-3 text-[12px] text-ink3">Start typing to search the guest list (app sign-ups and Zennara clinic guests).</div>

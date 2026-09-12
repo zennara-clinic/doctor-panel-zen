@@ -1,5 +1,5 @@
 import type { PreConsultForm, User } from "./lib/types";
-import { fmtDate, fmtDateTime } from "./lib/format";
+import { fmtDate, fmtDateTime, guestCodeOf } from "./lib/format";
 import { Modal, Tag } from "./ui";
 
 /**
@@ -81,7 +81,7 @@ export function PreConsultBody({ form }: { form: PreConsultForm }) {
       <div className="flex flex-wrap items-center gap-2">
         <Tag kind={form.status === "Approved" || form.status === "Reviewed" ? "ok" : form.status === "Rejected" ? "err" : "warn"}>{form.status}</Tag>
         <span className="text-ink3">Visit {fmtDate(form.dateOfVisit || form.createdAt)}</span>
-        {guest?.patientId && <span className="font-mono text-[10.5px] text-ink3">{guest.patientId}</span>}
+        {guestCodeOf(guest) && <span className="font-mono text-[10.5px] text-ink3">{guestCodeOf(guest)}</span>}
       </div>
 
       <Block t="The guest">

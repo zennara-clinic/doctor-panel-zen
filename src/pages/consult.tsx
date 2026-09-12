@@ -18,7 +18,7 @@ import { PreConsultModal, chosenLabels } from "../preconsult";
 import GuestPurchases from "../purchases";
 import { VisitMenu, VisitStatus, useVisitRunner, visitTime } from "../visit";
 import {
-  addClinicDays, ageFrom, bookingServiceName, fmtAgo, fmtDate, fmtDateLong, fmtDateTime, idOf, initials, isoDay,
+  addClinicDays, ageFrom, bookingServiceName, fmtAgo, fmtDate, fmtDateLong, fmtDateTime, guestCodeOf, idOf, initials, isoDay,
 } from "../lib/format";
 import type { Booking, ConsultationNote, Consultation, PackageAssignment, PreConsultForm, PrescriptionItem, User } from "../lib/types";
 import logo from "../assets/zennara-logo.png";
@@ -381,7 +381,7 @@ function Workspace({ bookingId }: { bookingId: string }) {
               <div className="dz-pbar__name">{p?.fullName ?? bk.fullName}</div>
               <div className="dz-pbar__meta">
                 {(age || p?.gender) && <span>{[age ? `${age} yrs` : null, p?.gender].filter(Boolean).join(" · ")}</span>}
-                {p?.patientId && <span>ID {p.patientId}</span>}
+                {guestCodeOf(p) && <span>Guest code {guestCodeOf(p)}</span>}
                 <span>{bookingServiceName(bk, "Visit")} · {visitTime(bk)}{bk.preferredLocation ? ` · ${bk.preferredLocation}` : ""}</span>
               </div>
             </div>
@@ -1036,7 +1036,7 @@ function RxSheet({ sheetRef, bk, patient: p, form, draft, note, signed, doctorNa
       </div>
       <div className="dz-rxsheet__pt">
         <div><span>Guest</span>{p?.fullName ?? bk.fullName}</div>
-        <div><span>Guest ID</span>{p?.patientId ?? "—"}</div>
+        <div><span>Guest code</span>{guestCodeOf(p) || "—"}</div>
         <div><span>Age / gender</span>{[age ? `${age} yrs` : null, p?.gender].filter(Boolean).join(" · ") || "—"}</div>
         <div><span>Date</span>{fmtDate(signed ? note?.prescriptionSignedAt ?? note?.completedAt : new Date())}</div>
         <div><span>Dermatologist</span>{signedBy || "—"}</div>

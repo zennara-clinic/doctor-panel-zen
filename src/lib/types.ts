@@ -98,6 +98,8 @@ export type Branch = {
 /* ---------------- people ---------------- */
 export type User = {
   _id: Id;
+  /** Zenoti's Guest Code — the id the clinic prints and quotes. Read it with guestCodeOf(). */
+  guestCode?: string | null;
   patientId?: string;
   fullName: string;
   email: string;
