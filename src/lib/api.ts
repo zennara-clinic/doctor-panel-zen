@@ -13,6 +13,7 @@ import type {
   Doctor, DoctorAvailability, WeeklyBlock,
   DoctorFeeRequest, Formulation, MyFee, ScheduleDay, SlotDay,
   Id, Inventory, Notification, Package, PackageAssignment, PreConsultForm, Product, ProductOrder,
+  DigitiseBody, DigitisedForm, FormOrigin, IntakeDetail, IntakeState, IntakeSummary, PreConsultSchema,
   PatientPhoto, ProductAvailability, ProductReview, ServiceCard, ServiceReview, ServiceType, SupportMessage, TaxonomyTree, User, Vendor,
   LifecycleAction, LifecycleState,
   PrescriptionItem, RxFavourite, RxRecentItem,
@@ -617,15 +618,36 @@ export const support = {
 };
 
 /* ============================ clinical forms ============================ */
+export type BookingIntakeStatus = {
+  state: "not_started" | "draft" | "completed" | "waived";
+  label: string;
+  formId: Id | null;
+  linked: boolean;
+  status?: string;
+  updatedAt?: string;
+  reason?: string | null;
+  /** Three-state intake (digital / paper / none). Older APIs omit it — fall back on `state`. */
+  intakeState?: IntakeState;
+  origin?: FormOrigin | null;
+};
+
 export const preConsult = {
   /** "Pre-consultation form: Completed" for one appointment — one cheap call. */
-  statusForBooking: (bookingId: Id) =>
-    request<{ state: "not_started" | "draft" | "completed" | "waived"; label: string; formId: Id | null; linked: boolean; status?: string; updatedAt?: string; reason?: string | null }>(
-      `/pre-consult-forms/admin/by-booking/${bookingId}`,
-    ),
+  statusForBooking: (bookingId: Id) => request<BookingIntakeStatus>(`/pre-consult-forms/admin/by-booking/${bookingId}`),
   list: (q?: Query) => requestRaw<PreConsultForm[]>("/pre-consult-forms/admin/all", { query: q }),
   setStatus: (id: Id, status: string) =>
     request<PreConsultForm>(`/pre-consult-forms/admin/${id}/status`, { method: "PATCH", body: { status } }),
+  /** A guest's intake in three states, with the evidence behind "paper" (dermatologists: own guests only). */
+  intake: (userId: Id) => request<IntakeDetail>(`/pre-consult-forms/admin/intake/${userId}`),
+  /** The steps and fields the digitising editor renders. */
+  schema: () => request<PreConsultSchema>("/pre-consult-forms/admin/schema"),
+  /**
+   * Type the paper form a dermatologist is holding into a digital record.
+   * 400 FORM_VALIDATION_FAILED carries `fieldErrors`; 409 INTAKE_ALREADY_DIGITAL
+   * carries the existing `formId`; 403 NOT_YOUR_PATIENT for another's guest.
+   */
+  digitise: (userId: Id, body: DigitiseBody) =>
+    requestRaw<DigitisedForm>(`/pre-consult-forms/admin/digitise/${userId}`, { method: "POST", body }),
 };
 
 export const consentForms = {
@@ -843,6 +865,8 @@ export type MyPatient = {
   lastBooked?: string | null;
   nextVisit?: string | null;
   services: string[];
+  /** Digital / on paper / not yet — absent until the API that stamps it is deployed. */
+  intake?: IntakeSummary | null;
 };
 
 /* ============================ zenoti (CRM) ============================ */

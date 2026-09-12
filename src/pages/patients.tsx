@@ -12,7 +12,7 @@ import { useStore } from "../store";
 import { Area, Async, Btn, Empty, Modal, Panel, Segmented } from "../ui";
 import { NoProfile, VisitRow, isOpenVisit, visitTime } from "../visit";
 import { PhotoGrid, PhotoStudio } from "../photos";
-import { PreConsultModal } from "../preconsult";
+import { IntakeTag, PreConsultModal, originSentence } from "../preconsult";
 import GuestPurchases from "../purchases";
 import { PackageCard, PackageLine as PackageSummary, PackagesFreshness, useGuestPackages } from "../packages";
 import { NewBookingModal } from "./reception";
@@ -112,6 +112,7 @@ export function MyPatients() {
                     <span className="dz-prow__name">
                       {p.fullName}
                       {p.drugAllergy && <span className="dz-pill dz-pill--sm dz-pill--err"><AlertTriangle />Allergy</span>}
+                      <IntakeTag intake={p.intake} />
                       {p.nextVisit && <span className="dz-pill dz-pill--sm">Next: {fmtWhen(p.nextVisit)}</span>}
                     </span>
                     <span className="dz-prow__sub">
@@ -306,7 +307,17 @@ export function PatientRecord() {
                       <dt>Last diagnosis</dt><dd>{lastSigned?.primaryDiagnosis || lastSigned?.assessment || "—"}</dd>
                       <dt>Last prescription</dt><dd>{lastSigned?.prescription?.length ? lastSigned.prescription.map((r) => r.medicine).join(", ") : "—"}</dd>
                       {latestForm?.currentMedications && <><dt>Taking</dt><dd>{latestForm.currentMedications}</dd></>}
-                      {latestForm && <><dt>Latest intake</dt><dd>{fmtDate(latestForm.dateOfVisit || latestForm.createdAt)} · {latestForm.status}</dd></>}
+                      {latestForm && (
+                        <>
+                          <dt>Latest intake</dt>
+                          <dd>
+                            {fmtDate(latestForm.dateOfVisit || latestForm.createdAt)} · {latestForm.status}
+                            {originSentence(latestForm.origin, latestForm.createdAt) && (
+                              <span className="dz-hint" style={{ display: "block", marginTop: 2 }}>{originSentence(latestForm.origin, latestForm.createdAt)}</span>
+                            )}
+                          </dd>
+                        </>
+                      )}
                     </dl>
                   </Panel>
 
@@ -410,7 +421,7 @@ export function PatientRecord() {
                     <div className="dz-stack--sm">
                       {forms.map((f) => (
                         <button key={f._id} type="button" className="dz-result" onClick={() => setOpenForm(f)}>
-                          <span className="dz-result__txt"><b>{fmtDate(f.dateOfVisit || f.createdAt)}</b><small>{f.doctorName ? `For ${f.doctorName}` : "Pre-consult form"}</small></span>
+                          <span className="dz-result__txt"><b>{fmtDate(f.dateOfVisit || f.createdAt)}</b><small>{originSentence(f.origin, f.createdAt) ?? (f.doctorName ? `For ${f.doctorName}` : "Pre-consult form")}</small></span>
                           <span className="dz-result__side">
                             <span className={`dz-pill dz-pill--sm ${f.status === "Reviewed" || f.status === "Approved" ? "dz-pill--ok" : "dz-pill--warn"}`}>{f.status}</span>
                             <ChevronRight className="h-5 w-5 text-ink3" />

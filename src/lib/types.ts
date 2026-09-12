@@ -903,7 +903,68 @@ export type PreConsultForm = {
   status: "Draft" | "Submitted" | "Approved" | "Reviewed" | "Rejected";
   dateOfVisit?: string;
   createdAt?: string;
+  /** Where the answers came from — absent on records the API has not stamped yet. */
+  origin?: FormOrigin | null;
 };
+
+/* ---------------------------------------------------------- intake provenance */
+
+/**
+ * Whether a guest's pre-consult intake exists digitally, only on paper at the
+ * clinic, or not at all. Most guests seen before the app (2021–2026) filled the
+ * form on paper, so "paper" is the common case, not an error.
+ */
+export type IntakeState = "digital" | "paper" | "none";
+
+/** Provenance stamped on every pre-consult form. */
+export type FormOrigin = {
+  channel: "app" | "walkin" | "staff";
+  capturedOn: "digital" | "paper";
+  /** The date written on the paper form, when it was digitised from one. */
+  paperDate?: string | null;
+  enteredBy?: { id?: Id | null; name?: string | null; role?: string | null } | null;
+  enteredAt?: string | null;
+  signatureOnPaper?: boolean;
+  /** True when the stamp was worked out from the record rather than recorded at the time. */
+  inferred?: boolean;
+};
+
+/** The intake tag on a guests-list row. */
+export type IntakeSummary = {
+  state: IntakeState;
+  label?: string | null;
+  formId?: Id | null;
+  capturedOn?: "digital" | "paper" | null;
+};
+
+/** GET /pre-consult-forms/admin/intake/:userId */
+export type IntakeDetail = {
+  state: IntakeState;
+  label?: string | null;
+  formId?: Id | null;
+  form: { _id: Id; status: PreConsultForm["status"]; createdAt?: string; dateOfVisit?: string; origin?: FormOrigin | null } | null;
+  evidence?: { completedVisits?: number; packages?: number; prescriptions?: number };
+  canDigitise?: boolean;
+};
+
+export type PreConsultFieldType = "text" | "textarea" | "date" | "email" | "number" | "select" | "chips" | "multichips" | "yesno" | "boolean";
+export type PreConsultSchemaField = {
+  key: string;
+  label: string;
+  type: PreConsultFieldType;
+  options?: { value: string; label: string }[];
+  required?: boolean;
+  hint?: string;
+  maxLength?: number;
+  showIf?: { key: string; equals: unknown };
+};
+export type PreConsultSchemaStep = { key: string; title: string; fields: PreConsultSchemaField[] };
+/** GET /pre-consult-forms/admin/schema — what the digitising editor renders. */
+export type PreConsultSchema = { steps: PreConsultSchemaStep[]; empty?: Record<string, unknown> };
+
+/** POST /pre-consult-forms/admin/digitise/:userId */
+export type DigitiseBody = { values: Record<string, unknown>; paperDate: string; notes?: string; replace?: boolean };
+export type DigitisedForm = { _id: Id; status: PreConsultForm["status"]; createdAt?: string; dateOfVisit?: string; origin?: FormOrigin | null };
 
 export type ConsentForm = {
   _id: Id;

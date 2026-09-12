@@ -14,13 +14,13 @@ import { Btn, Empty, In, Loading, Modal, Note, Panel, Toggle } from "../ui";
 import { DictField, appendSentence, useMic } from "../dictfield";
 import RxBuilder, { rxSummary } from "../rx";
 import { PhotoStudio } from "../photos";
-import { PreConsultModal, chosenLabels } from "../preconsult";
+import { DigitisePreConsultModal, PreConsultModal, chosenLabels, originSentence } from "../preconsult";
 import GuestPurchases from "../purchases";
 import { VisitMenu, VisitStatus, useVisitRunner, visitTime } from "../visit";
 import {
   addClinicDays, ageFrom, bookingServiceName, fmtAgo, fmtDate, fmtDateLong, fmtDateTime, guestCodeOf, idOf, initials, isoDay,
 } from "../lib/format";
-import type { Booking, ConsultationNote, Consultation, PackageAssignment, PreConsultForm, PrescriptionItem, User } from "../lib/types";
+import type { Booking, ConsultationNote, Consultation, FormOrigin, IntakeState, PackageAssignment, PreConsultForm, PrescriptionItem, User } from "../lib/types";
 import logo from "../assets/zennara-logo.png";
 
 /*
@@ -150,6 +150,14 @@ function Workspace({ bookingId }: { bookingId: string }) {
     return latest ? { doc: latest, linked: false } : null;
   }, [bookingId, userId]);
   const intake = useApi(() => api.preConsult.statusForBooking(bookingId).catch(() => null), [bookingId]);
+  /*
+   * Digital / paper / none. Older APIs only say "waived", which meant the
+   * clinic holds this returning guest's intake on paper; anything else with no
+   * form to show is "none". Unknown until the status call has answered.
+   */
+  const intakeState: IntakeState | undefined = intake.data
+    ? intake.data.intakeState ?? (intake.data.state === "waived" ? "paper" : intake.data.formId ? "digital" : "none")
+    : undefined;
   const consent = useApi(
     () => (userId ? api.consentForms.list({ userId, limit: 1 }).then((r) => (r.data ?? [])[0] ?? null).catch(() => null) : Promise.resolve(null)),
     [userId],
@@ -362,11 +370,12 @@ function Workspace({ bookingId }: { bookingId: string }) {
 
   const guest = (
     <GuestContext bk={bk} patient={p} form={form} consent={consent.data ?? null} history={history.data}
-      paperIntake={intake.data?.state === "waived"}
+      intakeState={intakeState} intakeOrigin={intake.data?.origin ?? null}
       doctorName={doctorName} userId={userId}
       onOpenRecord={() => nav(`/dermatologist/patient?id=${userId}`, { state: { id: userId } })}
       onOpenVisit={(id) => nav(`/dermatologist/consultation?booking=${id}`)}
       onChanged={() => { form.reload(); consent.reload(); }}
+      onIntakeChanged={() => { form.reload(); intake.reload(); }}
       toast={toast} audit={audit} />
   );
 
@@ -604,10 +613,14 @@ function VisitBanner({ bk, signed, editing, note, onEdit, onCancelEdit }: {
 
 /* ------------------------------------------------------------ guest context */
 
-function GuestContext({ bk, patient: p, form, consent, history, paperIntake, doctorName, userId, onOpenRecord, onOpenVisit, onChanged, toast, audit }: {
+function GuestContext({ bk, patient: p, form, consent, history, intakeState, intakeOrigin, doctorName, userId, onOpenRecord, onOpenVisit, onChanged, onIntakeChanged, toast, audit }: {
   bk: Booking; patient: User | null | undefined;
-  /** No app form, but the clinic holds this returning guest's intake on paper. */
-  paperIntake?: boolean;
+  /** Digital / paper (the clinic holds the intake on paper) / none; undefined while unknown. */
+  intakeState?: IntakeState;
+  /** Provenance from the booking status call, used when the form record itself carries none. */
+  intakeOrigin?: FormOrigin | null;
+  /** After a paper form is digitised: reload the form and the intake status so the card flips. */
+  onIntakeChanged?: () => void;
   form: { data: { doc: PreConsultForm; linked: boolean } | null | undefined; initial: boolean; reload: () => void };
   consent: { _id: string; patientName: string; createdAt?: string; status: string; doctorSignature?: string | null } | null;
   history?: { notes: ConsultationNote[]; visits: Booking[] | null };
@@ -616,9 +629,11 @@ function GuestContext({ bk, patient: p, form, consent, history, paperIntake, doc
   toast: (m: string) => void; audit: ReturnType<typeof useStore>["audit"];
 }) {
   const [formOpen, setFormOpen] = useState(false);
+  const [digitiseOpen, setDigitiseOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const f = form.data?.doc ?? null;
   const age = ageFrom(p?.dateOfBirth);
+  const origin = f ? originSentence(f.origin ?? intakeOrigin, f.createdAt) : null;
 
   const run = async (fn: () => Promise<unknown>, msg: string) => {
     setBusy(true);
@@ -657,12 +672,28 @@ function GuestContext({ bk, patient: p, form, consent, history, paperIntake, doc
       </Panel>
 
       <Panel icon={<ClipboardList />} title="Pre-consult form"
-        sub={f ? (form.data?.linked ? `Filled for this visit · ${fmtDate(f.dateOfVisit || f.createdAt)}` : `From ${fmtDate(f.dateOfVisit || f.createdAt)} — not this visit`) : undefined}
+        sub={f ? (
+          <>
+            {form.data?.linked ? `Filled for this visit · ${fmtDate(f.dateOfVisit || f.createdAt)}` : `From ${fmtDate(f.dateOfVisit || f.createdAt)} — not this visit`}
+            {origin && <><br />{origin}</>}
+          </>
+        ) : undefined}
         right={f ? <span className={`dz-pill dz-pill--sm ${f.status === "Reviewed" || f.status === "Approved" ? "dz-pill--ok" : "dz-pill--warn"}`}>{f.status}</span> : undefined}>
         {form.initial ? <Loading label="" rows={2} /> : !f ? (
-          paperIntake
-            ? <div className="dz-note dz-note--ok"><Check /><span>Intake held on paper at the clinic — this guest has been seen before. There is no app form to show.</span></div>
-            : <div className="dz-hint">No pre-consult form on this guest’s record. The desk can hand them the walk-in tablet to fill it.</div>
+          <div className="dz-stack--sm">
+            {intakeState === "paper"
+              ? <div className="dz-note dz-note--ok"><Check /><span>Intake held on paper at the clinic — this guest has been seen before. There is no app form to show.</span></div>
+              : <div className="dz-hint">No pre-consult form on this guest’s record. The desk can hand them the walk-in tablet to fill it.</div>}
+            {userId && (
+              <div className="dz-row">
+                <Btn kind="secondary" size="sm" onClick={() => setDigitiseOpen(true)}>
+                  <PenLine />{intakeState === "paper" ? "Digitise the paper form" : "Enter the paper form"}
+                </Btn>
+              </div>
+            )}
+            <DigitisePreConsultModal userId={userId} guestName={bk.fullName} open={digitiseOpen} onClose={() => setDigitiseOpen(false)}
+              onDone={(saved) => { audit("FORM_STATUS_CHANGED", `${bk.fullName} paper pre-consult digitised`, { formId: saved._id, digitised: true }); (onIntakeChanged ?? onChanged)(); }} />
+          </div>
         ) : (
           <div className="dz-stack--sm">
             {intakeRows.length ? <dl className="dz-kv">{intakeRows.map(([k, v]) => <FactRow key={k} k={k} v={v} />)}</dl>
