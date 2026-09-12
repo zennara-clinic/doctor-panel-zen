@@ -104,7 +104,6 @@ export const patients = {
     request<User>(`/admin/users/${id}/membership`, { method: "POST", body }),
   cancelMembership: (id: Id) => request<User>(`/admin/users/${id}/membership`, { method: "DELETE" }),
   markMembershipPaid: (id: Id, body?: { paymentMethod?: string; transactionId?: string; amount?: number }) => request<unknown>(`/admin/users/${id}/membership/paid`, { method: "POST", body }),
-  exportAll: (q?: Query) => request<Record<string, unknown>[]>("/admin/users/export", { query: q }),
 };
 
 /* ============================ bookings ============================ */
@@ -134,8 +133,6 @@ export const bookings = {
   /** Move the consultation through its clinical lifecycle; never touches `status`. */
   setStage: (id: Id, body: { stage?: ConsultationStage | null; followUp?: { required?: boolean; dueDate?: string | null; notes?: string } }) =>
     request<{ _id: Id; consultationStage: ConsultationStage | null; followUp?: Booking["followUp"] }>(`/bookings/admin/${id}/stage`, { method: "PATCH", body }),
-  /** Same filters as `list`; returns labelled rows for CSV. `fields` trims columns. */
-  export: (q?: Query) => request<Record<string, unknown>[]>("/bookings/admin/export", { query: q }),
   /**
    * Run one desk action on an appointment: check_in, undo_check_in, start,
    * undo_start, complete, undo_complete, no_show, undo_no_show, cancel,

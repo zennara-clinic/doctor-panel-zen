@@ -1029,33 +1029,3 @@ export function ActiveFilters({ items, onClear }: { items: { key: string; label:
     </div>
   );
 }
-
-/** Export modal: pick columns, then download whatever the page's fetcher returns. */
-export function ExportModal({ open, onClose, columns, fetchRows, filename, summary }: {
-  open: boolean; onClose: () => void; columns: string[]; filename: string; summary?: string;
-  fetchRows: (fields: string[]) => Promise<Record<string, unknown>[]>;
-}) {
-  const [picked, setPicked] = useState<string[]>(columns);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { if (open) { setPicked(columns); setErr(null); } }, [open, columns.join("|")]);
-  const run = async () => {
-    setBusy(true); setErr(null);
-    try {
-      const rows = await fetchRows(picked);
-      if (!rows.length) { setErr("Nothing matched the current filters."); return; }
-      const cols = picked.filter((c) => c in rows[0]);
-      exportCsv(filename, cols, rows.map((r) => cols.map((c) => (r[c] ?? "") as string | number)));
-      onClose();
-    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
-  };
-  return (
-    <Modal open={open} onClose={onClose} title="Export CSV"
-      footer={<><span className="flex-1" /><Btn kind="secondary" onClick={onClose}>Cancel</Btn><Btn disabled={busy || !picked.length} onClick={run}>{busy ? "Preparing…" : "Download CSV"}</Btn></>}>
-      {summary && <div className="mb-3 text-[14px] text-ink2">{summary}</div>}
-      <MultiSelect label={`Columns (${picked.length}/${columns.length})`} options={columns.map((c) => [c, c])}
-        value={picked} onChange={setPicked} placeholder="Choose columns…" searchPlaceholder="Search columns…" />
-      {err && <div className="dz-error mt-2">{err}</div>}
-    </Modal>
-  );
-}
