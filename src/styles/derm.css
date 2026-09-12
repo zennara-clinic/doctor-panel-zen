@@ -639,6 +639,48 @@
     .dz-marker__tool span, .dz-marker__kind { display: none; }
   }
 
+  /* ============================================ prescription layout chooser */
+  .dz-layoutpick { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
+  .dz-layoutpick__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+  .dz-layoutpick__head b { font-size: 15px; font-weight: 800; }
+  .dz-layoutpick__cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .dz-layoutpick__card { display: flex; align-items: center; gap: 12px; min-height: 76px; padding: 12px 14px; border: 2px solid var(--color-border); border-radius: 16px; background: var(--color-surface); color: var(--color-ink); font: inherit; text-align: left; cursor: pointer; transition: background-color 0.15s, border-color 0.15s; }
+  .dz-layoutpick__card:hover { background: var(--color-sage); }
+  .dz-layoutpick__card.is-on { border-color: var(--color-gold); background: var(--color-gold-soft); }
+  .dz-layoutpick__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+  .dz-layoutpick__text b { font-size: 14.5px; font-weight: 800; }
+  .dz-layoutpick__text small { font-size: 12.5px; line-height: 1.35; color: var(--color-ink3); }
+  .dz-layoutpick__tick { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 50%; color: var(--color-primary); }
+  .dz-layoutpick__card.is-on .dz-layoutpick__tick { background: var(--color-gold); }
+  .dz-layoutpick__tick svg { width: 15px; height: 15px; }
+  /* A miniature page: three "lines" of text under a header, coloured like the layout. */
+  .dz-layoutpick__swatch { display: flex; flex-direction: column; gap: 4px; width: 40px; height: 52px; flex: none; padding: 6px 5px; border: 1px solid var(--color-border-strong); border-radius: 5px; background: #fff; }
+  .dz-layoutpick__swatch i { display: block; height: 4px; border-radius: 2px; background: var(--color-border-strong); }
+  .dz-layoutpick__swatch i:first-child { height: 8px; margin-bottom: 2px; }
+  .dz-layoutpick__swatch--classic { background: #f8f3e6; border-color: #d9cfb6; }
+  .dz-layoutpick__swatch--classic i:first-child { width: 60%; background: var(--color-primary); }
+  .dz-layoutpick__swatch--classic i { background: #cbbf9d; }
+  .dz-layoutpick__swatch--modern { padding-top: 0; }
+  .dz-layoutpick__swatch--modern i:first-child { height: 12px; margin: 0 -5px 4px; border-radius: 4px 4px 0 0; background: var(--color-primary); }
+  .dz-layoutpick__swatch--modern i { background: var(--color-primary-soft); }
+  .dz-layoutpick__swatch--minimal i:first-child { width: 50%; background: #111714; }
+  .dz-layoutpick__swatch--minimal i { background: #c9c9c9; }
+  @media (max-width: 760px) {
+    .dz-layoutpick__cards { grid-template-columns: 1fr; }
+    .dz-layoutpick__card { min-height: 64px; }
+  }
+
+  /* The server-rendered prescription, framed at A4 and scrolling inside itself. */
+  .dz-rxframe { position: relative; width: 100%; aspect-ratio: 210 / 297; max-height: 82dvh; overflow: hidden; border: 1px solid var(--color-border); border-radius: 18px; background: #fff; }
+  .dz-rxframe__doc { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+  .dz-rxframe__busy { position: absolute; top: 12px; left: 12px; z-index: 1; display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-ink2); font-size: 13px; font-weight: 650; }
+  .dz-rxframe__busy svg { width: 15px; height: 15px; }
+  .dz-rxframe__hint { position: absolute; top: 12px; right: 12px; z-index: 1; max-width: 60%; padding: 8px 12px; border: 1px solid var(--color-warn); border-radius: 12px; background: var(--color-warn-bg); color: var(--color-warn); font-size: 12.5px; font-weight: 650; }
+  @media (max-width: 760px) {
+    .dz-rxframe { aspect-ratio: auto; height: 70dvh; }
+    .dz-rxframe__hint { position: static; max-width: none; margin: 10px; }
+  }
+
   /* ================================================================= print */
   @media print {
     body * { visibility: hidden !important; }

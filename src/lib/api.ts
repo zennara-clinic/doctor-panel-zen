@@ -5,7 +5,7 @@
  * unwrapped by `request`; endpoints that also carry `stats`/`count`/
  * `pagination` use `requestRaw` and return the whole envelope.
  */
-import { request, requestRaw, type Envelope, type Query } from "./http";
+import { API_BASE, ApiError, getToken, request, requestRaw, type Envelope, type Query } from "./http";
 import type {
   Invoice, MembershipAssignment,
   Admin, AppCustomization, AuditEntry, Banner, Booking, BookingSession, Branch, Brand, Category, Chat, ChatMessage, DeletedAccount, StockMovement,
@@ -16,8 +16,42 @@ import type {
   DigitiseBody, DigitisedForm, FormOrigin, IntakeDetail, IntakeState, IntakeSummary, PreConsultSchema,
   PatientPhoto, ProductAvailability, ProductReview, ServiceCard, ServiceReview, ServiceType, SupportMessage, TaxonomyTree, User, Vendor,
   LifecycleAction, LifecycleState,
-  PrescriptionItem, RxFavourite, RxRecentItem,
+  PrescriptionItem, RxFavourite, RxRecentItem, RxTemplateKey,
 } from "./types";
+
+/**
+ * An authenticated GET that returns a document rather than a JSON envelope
+ * (the server-rendered prescription). Anything that is not HTML — an older
+ * API's JSON 404, a proxy error page — is thrown, so callers can fall back.
+ */
+async function requestText(path: string, query?: Query): Promise<string> {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(query ?? {})) {
+    if (v === undefined || v === null || v === "") continue;
+    sp.append(k, String(v));
+  }
+  const qs = sp.toString();
+  const headers: Record<string, string> = { Accept: "text/html" };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}${qs ? `?${qs}` : ""}`, { headers });
+  } catch (err) {
+    throw new ApiError("Cannot reach the Zennara API. Check your connection.", 0, err);
+  }
+  const text = await res.text();
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try { message = (JSON.parse(text) as { message?: string })?.message || message; } catch { /* not JSON */ }
+    throw new ApiError(message, res.status, text);
+  }
+  const type = res.headers.get("content-type") ?? "";
+  if (!/text\/html/i.test(type) && !/^\s*<(!doctype|html)/i.test(text)) {
+    throw new ApiError("The server did not return a document", 502, text);
+  }
+  return text;
+}
 
 /* ============================ auth ============================ */
 export const auth = {
@@ -687,6 +721,14 @@ export const consultationNotes = {
     requestRaw<ConsultationNote>("/consultation-notes", { method: "POST", body }) as Promise<Envelope<ConsultationNote> & { prescriptionEmailed?: boolean; message?: string }>,
   /** Email the signed prescription to the guest (first send or resend). */
   send: (id: Id) => requestRaw(`/consultation-notes/${id}/send`, { method: "POST", body: {} }),
+  /**
+   * The complete branded prescription as the guest receives it, rendered by
+   * the server. `template` previews a layout other than the stored one;
+   * `draft` forces the "preview — not signed" ribbon. Throws on an API that
+   * does not have the endpoint yet.
+   */
+  prescriptionHtml: (id: Id, opts: { template?: RxTemplateKey; draft?: boolean } = {}) =>
+    requestText(`/consultation-notes/${id}/prescription.html`, { template: opts.template, draft: opts.draft ? 1 : undefined }),
   remove: (id: Id) => requestRaw(`/consultation-notes/${id}`, { method: "DELETE" }),
 };
 

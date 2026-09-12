@@ -1030,7 +1030,15 @@ export type PrescriptionItem = {
   isScheduleH?: boolean;
 };
 
+/** The printed prescription's layout. Metadata for the chooser lives with the Sign step. */
+export type RxTemplateKey = "classic" | "modern" | "minimal";
+
 export type ConsultationNote = {
+  /**
+   * Which printed layout the guest receives (default "classic"). Changing it
+   * never revokes a signature; older APIs simply do not return it.
+   */
+  prescriptionTemplate?: RxTemplateKey;
   /* Diagnosis and advice — the 2026-09 prescription builder. */
   primaryDiagnosis?: string;
   secondaryDiagnosis?: string;

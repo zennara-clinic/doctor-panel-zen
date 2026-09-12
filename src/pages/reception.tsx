@@ -577,9 +577,15 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
 }) {
   const me = useMyDoctor();
   const { toast, audit, branch, branches, branchId } = useStore();
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
+  /*
+   * This panel books for guests already on file only: a new guest is created
+   * on the walk-in tablet (or by signing up in the app), never from here.
+   */
+  const [picked, setPicked] = useState<User | null>(null);
+  const [term, setTerm] = useState("");
+  const debounced = useDebounced(term);
+  const guest: Pick<User, "_id" | "fullName" | "phone" | "email"> | null = presetUser ?? picked;
+  const name = guest?.fullName ?? "";
   const [serviceId, setServiceId] = useState("");
   const [doctorId, setDoctorId] = useState("");
   const [location, setLocation] = useState("");
@@ -601,9 +607,7 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
 
   useEffect(() => {
     if (!open) return;
-    setName(presetUser?.fullName ?? "");
-    setPhone(presetUser?.phone ?? "");
-    setEmail(presetUser?.email?.endsWith("@zennara.local") ? "" : presetUser?.email ?? "");
+    setPicked(null); setTerm("");
     setLocation(branch && branch !== "All branches" ? branch : branches[0]?.name ?? "");
     setDate(isoDay()); setTime(""); setNotes(""); setErr(null); setConfirmNow(false);
     // A dermatologist booking a follow-up books it with themselves unless they pick someone else.
@@ -613,6 +617,13 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
   useEffect(() => {
     if (!serviceId && refs.data?.services.length) setServiceId(refs.data.services[0]._id);
   }, [refs.data?.services.length]);
+
+  // The guest list, searched inline (name, phone, email or guest code) when no guest was handed in.
+  const found = useApi(
+    () => (open && !presetUser && debounced.length >= 2 ? api.patients.list({ search: debounced, limit: 8 }) : Promise.resolve(undefined)),
+    [open, !!presetUser, debounced],
+  );
+  const foundRows = found.data?.data?.users ?? [];
 
   /*
    * Bookable times. With a dermatologist picked, their own diary decides
@@ -642,10 +653,7 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
 
   const submit = async () => {
     setErr(null);
-    if (name.trim().length < 2) return setErr("Enter the guest's full name");
-    // A guest already on file: the server takes their contact from the record,
-    // which the dermatologist panel never receives.
-    if (!presetUser && phone.replace(/\D/g, "").length < 10) return setErr("Enter a valid mobile number");
+    if (!guest) return setErr("Choose a guest on file — new guests check in on the walk-in tablet first.");
     if (!serviceId) return setErr("Pick a service");
     if (!location) return setErr("Pick a centre");
     if (!time) return setErr("Pick a time slot");
@@ -661,10 +669,8 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
          * from 1650b89 it is stripped before the panel, so "" goes and the
          * server fills it from userId. Works in either deploy order.
          */
-        mobileNumber: presetUser ? (presetUser.phone ?? "") : phone.trim(),
-        email: presetUser
-          ? (presetUser.email && !presetUser.email.endsWith("@zennara.local") ? presetUser.email : undefined)
-          : email.trim() || undefined,
+        mobileNumber: guest.phone ?? "",
+        email: guest.email && !guest.email.endsWith("@zennara.local") ? guest.email : undefined,
         preferredLocation: location,
         preferredDate: date,
         preferredTimeSlots: [time],
@@ -674,7 +680,7 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
         // No amount: the server prices the service for the centre. Prices stay out of the dermatologist panel.
         notes: notes.trim() || undefined,
         confirmNow,
-        userId: presetUser?._id,
+        userId: guest._id,
       });
       audit("BOOKING_CREATED", `${name.trim()} · ${service?.name ?? ""} · ${date} ${time}`);
       toast(`${name.trim()} is booked — confirmation sent`);
@@ -691,12 +697,38 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
     <Modal open={open} onClose={onClose} title={presetUser ? `Book for ${presetUser.fullName}` : "New booking"} wide>
       {refs.initial && !refs.data ? <Loading label="Loading services and dermatologists…" /> : (
         <>
+          {!presetUser && (
+            <div className="mb-3 flex flex-col gap-1">
+              <label className="text-[11px] font-bold text-ink2">Guest</label>
+              {picked ? (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-ivory px-3 py-2.5">
+                  <span className="min-w-0 truncate"><B>{picked.fullName}</B>
+                    <span className="ml-2 text-[11.5px] text-ink3">{[guestCodeOf(picked), picked.location].filter(Boolean).join(" · ") || "On file"}</span>
+                  </span>
+                  <Btn kind="ghost" onClick={() => { setPicked(null); setTerm(""); }}>Change</Btn>
+                </div>
+              ) : (
+                <>
+                  <input autoFocus value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search guests on file — name, phone, email or guest code…"
+                    className="rounded-lg border border-border bg-ivory px-3 py-2 text-[13px] outline-none focus:border-gold-dark" />
+                  {debounced.length >= 2 && (
+                    <div className="max-h-[220px] overflow-y-auto rounded-xl border border-border bg-surface">
+                      {found.loading && !found.data ? <div className="p-3"><Spinner /></div>
+                        : foundRows.length === 0 ? <div className="px-3 py-3 text-[12px] text-ink3">No guests on file match “{debounced}”. New guests check in on the walk-in tablet first.</div>
+                        : foundRows.map((u) => (
+                          <button key={u._id} type="button" onClick={() => setPicked(u)} className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-ivory">
+                            <span className="min-w-0 truncate"><B>{u.fullName}</B><span className="ml-2 text-[11.5px] text-ink3">{[guestCodeOf(u), u.location].filter(Boolean).join(" · ")}</span></span>
+                            {isVip(u) ? <Tag kind="gold">Zen</Tag> : <Tag kind="mute">{u.source === "zenoti" ? "Clinic" : "App"}</Tag>}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                  <div className="text-[10.5px] text-ink3">New guests check in on the walk-in tablet first.</div>
+                </>
+              )}
+            </div>
+          )}
           <div className="grid gap-3 md:grid-cols-2">
-            <In label="Guest name" value={name} onChange={setName} placeholder="Full name" />
-            {!presetUser && <>
-              <In label="Mobile" value={phone} onChange={setPhone} placeholder="+91 …" />
-              <In label="Email (optional)" value={email} onChange={setEmail} placeholder="name@email.com" />
-            </>}
             <Sel label="Centre" value={location} onChange={setLocation}
               options={branches.map((b) => b.name)} />
             <div className="flex flex-col gap-1">
@@ -748,8 +780,7 @@ export function NewBookingModal({ open, onClose, onBooked, presetUser }: {
           </label>
 
           <Note className="mb-0">
-            If this mobile number is already on file we book against that record. A new number opens a guest record
-            automatically, and the guest gets the booking on WhatsApp.
+            Bookings here are for guests already on file — the guest gets the booking on WhatsApp. New guests check in on the walk-in tablet first.
           </Note>
 
           {err && <Note kind="crit">{err}</Note>}
@@ -1379,7 +1410,6 @@ export function Patients() {
   const { toast, branch, branches } = useStore();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [newOpen, setNewOpen] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [applied, setApplied] = useState<PatientFilters>(EMPTY_PF);
   const [draft, setDraft] = useState<PatientFilters>(EMPTY_PF);
@@ -1451,7 +1481,6 @@ export function Patients() {
         <Btn kind={chips.length ? "gold" : "ghost"} onClick={() => { setDraft(applied); setDrawer(true); }}>
           Filters{chips.length ? ` (${chips.length})` : ""}
         </Btn>
-        <Btn onClick={() => setNewOpen(true)}>+ New guest</Btn>
       </>}>
       <Hint id="patients-live">Click any row to open the full record — visits, packages, forms, orders and consents. Use Filters to slice by centre, age, membership, visits, spend, treatments had, or lapsed guests.</Hint>
 
@@ -1464,8 +1493,8 @@ export function Patients() {
 
       <Async q={q} label="Loading guests…" rows={8}>
         {() => users.length === 0 ? (
-          <Empty title="No guests here" hint={debounced || chips.length ? "Nothing matched the current search/filters." : "Add the first guest to get started."}
-            action={chips.length ? <Btn kind="ghost" onClick={() => clear(EMPTY_PF)}>Clear filters</Btn> : <Btn onClick={() => setNewOpen(true)}>+ New guest</Btn>} />
+          <Empty title="No guests here" hint={debounced || chips.length ? "Nothing matched the current search/filters." : "New guests check in on the walk-in tablet first."}
+            action={chips.length ? <Btn kind="ghost" onClick={() => clear(EMPTY_PF)}>Clear filters</Btn> : undefined} />
         ) : (
           <>
             <DataTable
@@ -1556,66 +1585,7 @@ export function Patients() {
           <div className="mt-2"><Chips options={[["desc", "Newest / highest first"], ["asc", "Oldest / lowest first"]]} value={draft.sortOrder} onChange={(v) => set("sortOrder", (v as string) || "desc")} /></div>
         </FSection>
       </FilterDrawer>
-
-      <NewPatientModal open={newOpen} onClose={() => setNewOpen(false)} onCreated={(id) => { q.reload(); nav("/patient", { state: { id } }); }} />
     </Page>
-  );
-}
-
-function NewPatientModal({ open, onClose, onCreated }: {
-  open: boolean; onClose: () => void; onCreated: (id: string) => void;
-}) {
-  const { toast, branch, branches } = useStore();
-  const [f, setF] = useState({ fullName: "", phone: "", email: "", dateOfBirth: "", gender: "Female", location: "" });
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    setF({ fullName: "", phone: "", email: "", dateOfBirth: "", gender: "Female",
-      location: branch && branch !== "All branches" ? branch : branches[0]?.name ?? "" });
-    setErr(null);
-  }, [open, branch, branches.length]);
-
-  const set = (k: keyof typeof f) => (v: string) => setF((s) => ({ ...s, [k]: v }));
-
-  const submit = async () => {
-    setErr(null);
-    if (f.fullName.trim().length < 2) return setErr("Enter the guest's full name");
-    if (f.phone.replace(/\D/g, "").length < 10) return setErr("Enter a valid mobile number");
-    if (!f.email.trim()) return setErr("An email is required — it is the login for the app");
-    if (!f.dateOfBirth) return setErr("Date of birth is required");
-    if (!f.location?.trim()) return setErr("A home centre is required — add a branch first if the list is empty");
-    setBusy(true);
-    try {
-      const user = await api.patients.create({
-        fullName: f.fullName.trim(), phone: f.phone.trim(), email: f.email.trim().toLowerCase(),
-        dateOfBirth: f.dateOfBirth, gender: f.gender, location: f.location,
-      });
-      toast(`${f.fullName.trim()} created`);
-      onCreated(user._id);
-      onClose();
-    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
-  };
-
-  return (
-    <Modal open={open} onClose={onClose} title="New guest" wide>
-      <div className="grid gap-3 md:grid-cols-2">
-        <In label="Full name" value={f.fullName} onChange={set("fullName")} />
-        <In label="Mobile" value={f.phone} onChange={set("phone")} placeholder="+91 …" />
-        <In label="Email" type="email" value={f.email} onChange={set("email")} placeholder="name@email.com"
-          hint="This is the address they sign into the app with." />
-        <In label="Date of birth" type="date" value={f.dateOfBirth} onChange={set("dateOfBirth")} />
-        <Sel label="Gender" value={f.gender} onChange={set("gender")} options={["Male", "Female", "Other"]} />
-        <Sel label="Home centre" value={f.location} onChange={set("location")} options={branches.map((b) => b.name)} />
-      </div>
-      <Note>A guest code is generated automatically. If this email or number is already on file the server will say so rather than creating a duplicate.</Note>
-      {err && <Note kind="crit">{err}</Note>}
-      <div className="mt-3 flex justify-end gap-2">
-        <Btn kind="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn disabled={busy} onClick={submit}>{busy ? "Creating…" : "Create guest"}</Btn>
-      </div>
-    </Modal>
   );
 }
 

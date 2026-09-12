@@ -20,7 +20,7 @@ import { VisitMenu, VisitStatus, useVisitRunner, visitTime } from "../visit";
 import {
   addClinicDays, ageFrom, bookingServiceName, fmtAgo, fmtDate, fmtDateLong, fmtDateTime, guestCodeOf, idOf, initials, isoDay,
 } from "../lib/format";
-import type { Booking, ConsultationNote, Consultation, FormOrigin, IntakeState, PackageAssignment, PreConsultForm, PrescriptionItem, User } from "../lib/types";
+import type { Booking, ConsultationNote, Consultation, FormOrigin, IntakeState, PackageAssignment, PreConsultForm, PrescriptionItem, RxTemplateKey, User } from "../lib/types";
 import logo from "../assets/zennara-logo.png";
 
 /*
@@ -52,15 +52,37 @@ type Draft = {
   skinCareAdvice: string; lifestyleAdvice: string; precautions: string;
   followUpDate: string; sketch: string | null;
   prescription: PrescriptionItem[]; assignedServices: Assigned[];
+  /** The printed layout the guest receives. */
+  prescriptionTemplate: RxTemplateKey;
 };
 type TextKey = "complaint" | "examination" | "assessment" | "plan" | "skinCareAdvice" | "lifestyleAdvice" | "precautions";
 
 const EMPTY: Draft = {
   complaint: "", examination: "", assessment: "", plan: "", primaryDiagnosis: "", secondaryDiagnosis: "",
   skinCareAdvice: "", lifestyleAdvice: "", precautions: "", followUpDate: "", sketch: null, prescription: [], assignedServices: [],
+  prescriptionTemplate: "classic",
 };
 
-const fromNote = (n: ConsultationNote | null | undefined): Draft => !n ? EMPTY : ({
+/* The printed layouts the server can render. Order is the chooser's order. */
+const RX_TEMPLATES: { key: RxTemplateKey; name: string; tagline: string }[] = [
+  { key: "classic", name: "Classic", tagline: "Cream paper, serif wordmark, ruled sections" },
+  { key: "modern", name: "Modern", tagline: "Forest-green header band, two-column details" },
+  { key: "minimal", name: "Minimal", tagline: "Monochrome and compact — printer-friendly" },
+];
+const isTemplate = (v: unknown): v is RxTemplateKey => RX_TEMPLATES.some((t) => t.key === v);
+/** The layout this dermatologist last signed with, on this device. */
+const RX_TEMPLATE_STORAGE_KEY = "dz.rxTemplate";
+const rememberedTemplate = (): RxTemplateKey => {
+  try { const v = localStorage.getItem(RX_TEMPLATE_STORAGE_KEY); return isTemplate(v) ? v : "classic"; } catch { return "classic"; }
+};
+const rememberTemplate = (t: RxTemplateKey) => { try { localStorage.setItem(RX_TEMPLATE_STORAGE_KEY, t); } catch { /* private mode */ } };
+
+/**
+ * `keep` is the layout already chosen on screen: a note the API returns
+ * without one (older backend, or never saved) must not reset the choice.
+ */
+const fromNote = (n: ConsultationNote | null | undefined, keep: RxTemplateKey): Draft => !n ? { ...EMPTY, prescriptionTemplate: keep } : ({
+  prescriptionTemplate: isTemplate(n.prescriptionTemplate) ? n.prescriptionTemplate : keep,
   complaint: n.complaint ?? "", examination: n.examination ?? "", assessment: n.assessment ?? "", plan: n.plan ?? "",
   primaryDiagnosis: n.primaryDiagnosis ?? "", secondaryDiagnosis: n.secondaryDiagnosis ?? "",
   skinCareAdvice: n.skinCareAdvice ?? "", lifestyleAdvice: n.lifestyleAdvice ?? "", precautions: n.precautions ?? "",
@@ -191,7 +213,7 @@ function Workspace({ bookingId }: { bookingId: string }) {
   const mic = useMic((m) => toast(m));
 
   /* ------------------------------------------------------------- the draft */
-  const [draft, setDraft] = useState<Draft>(EMPTY);
+  const [draft, setDraft] = useState<Draft>(() => ({ ...EMPTY, prescriptionTemplate: rememberedTemplate() }));
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [editingSigned, setEditingSigned] = useState(false);
@@ -223,11 +245,24 @@ function Workspace({ bookingId }: { bookingId: string }) {
   const noteKey = note.data === undefined ? "loading" : `${note.data?._id ?? "none"}:${note.data?.updatedAt ?? ""}`;
   useEffect(() => {
     if (note.data === undefined || dirtyRef.current) return;
-    setDraft(fromNote(note.data));
+    setDraft((d) => fromNote(note.data, d.prescriptionTemplate));
   }, [noteKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const update = (patch: Partial<Draft>) => { setDraft((d) => ({ ...d, ...patch })); setDirty(true); };
   const text = (k: TextKey) => (fn: (prev: string) => string) => { setDraft((d) => ({ ...d, [k]: fn(d[k]) })); setDirty(true); };
+  /*
+   * The printed layout. On a draft it travels with the next save or the
+   * signature. On a signed note it is saved on its own, right away: the
+   * server keeps the signature (the layout is not part of what was signed),
+   * and nothing else goes with it so an older API has nothing to revoke.
+   */
+  const setTemplate = (t: RxTemplateKey) => {
+    if (!(signed && !editingSigned)) { update({ prescriptionTemplate: t }); return; }
+    setDraft((d) => ({ ...d, prescriptionTemplate: t }));
+    api.consultationNotes.save({ bookingId, prescriptionTemplate: t })
+      .then((saved) => { note.setData(saved); })
+      .catch((e) => toast(`Couldn’t save the layout — ${(e as Error).message}`));
+  };
 
   const payload = (d: Draft, status: "Draft" | "Completed" | undefined) => ({
     bookingId,
@@ -236,6 +271,7 @@ function Workspace({ bookingId }: { bookingId: string }) {
     followUpDate: d.followUpDate || null,
     primaryDiagnosis: d.primaryDiagnosis, secondaryDiagnosis: d.secondaryDiagnosis,
     skinCareAdvice: d.skinCareAdvice, lifestyleAdvice: d.lifestyleAdvice, precautions: d.precautions,
+    prescriptionTemplate: d.prescriptionTemplate,
     ...(status ? { status } : {}),
     // The booking's specialist owns the note; for a walk-in with none, the signed-in dermatologist does.
     doctorId: meRef.current?.doctorId, doctorName: meRef.current?.name,
@@ -443,7 +479,7 @@ function Workspace({ bookingId }: { bookingId: string }) {
             )}
             <VisitBanner bk={bk} signed={signed} editing={editingSigned} note={note.data ?? null}
               onEdit={() => setEditingSigned(true)}
-              onCancelEdit={() => { setEditingSigned(false); setDraft(fromNote(note.data)); setDirty(false); setSaveState("idle"); }} />
+              onCancelEdit={() => { setEditingSigned(false); setDraft((d) => fromNote(note.data, d.prescriptionTemplate)); setDirty(false); setSaveState("idle"); }} />
 
             {step === "guest" && guest}
 
@@ -535,7 +571,7 @@ function Workspace({ bookingId }: { bookingId: string }) {
                 onSigned={(saved) => { note.setData(saved); setDirty(false); setEditingSigned(false); setSaveState("idle"); }}
                 beforeSign={beforeSign} afterSign={afterSign} reloadNote={note.reload}
                 runner={runner} reloadVisit={reloadVisit}
-                onFollowUp={(date) => update({ followUpDate: date })} />
+                onFollowUp={(date) => update({ followUpDate: date })} onTemplate={setTemplate} />
             )}
           </div>
 
@@ -849,8 +885,8 @@ function TreatmentsPanel({ assigned, locked, packages, onChange }: {
 
 /* -------------------------------------------------------------------- sign */
 
-function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName, photosCount, dirty, onGo, onSaveDraft, onSigned, runner, reloadVisit, onFollowUp, beforeSign, afterSign, reloadNote }: {
-  beforeSign: () => Promise<void>; afterSign: () => void; reloadNote: () => void;
+function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName, photosCount, dirty, onGo, onSaveDraft, onSigned, runner, reloadVisit, onFollowUp, onTemplate, beforeSign, afterSign, reloadNote }: {
+  beforeSign: () => Promise<void>; afterSign: () => void; reloadNote: () => void; onTemplate: (t: RxTemplateKey) => void;
   bk: Booking; patient: User | null | undefined; form: PreConsultForm | null; draft: Draft; note: ConsultationNote | null;
   signed: boolean; editing: boolean; doctorName: string; photosCount: number; dirty: boolean;
   onGo: (s: Step) => void; onSaveDraft: () => void; onSigned: (n: ConsultationNote) => void;
@@ -867,6 +903,30 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
   const [noFollowUp, setNoFollowUp] = useState(bk.followUp?.required === false && !draft.followUpDate);
   const [customDate, setCustomDate] = useState(false);
   const sheetRef = useRef<HTMLElement | null>(null);
+
+  /*
+   * The printed document, rendered by the server — the very file the guest
+   * gets by email. Fetched again when the layout changes or a save lands
+   * (`updatedAt`). Until the draft has been saved once there is nothing to
+   * render; on an API without the endpoint the panel's own sheet stays.
+   */
+  const previewSigned = signed && !editing;
+  const noteId = note?._id ?? null;
+  const [rx, setRx] = useState<{ html: string | null; state: "idle" | "loading" | "ready" | "unavailable" | "failed" }>(() => ({ html: null, state: noteId ? "loading" : "idle" }));
+  useEffect(() => {
+    if (!noteId) { setRx({ html: null, state: "idle" }); return; }
+    let live = true;
+    setRx((r) => ({ ...r, state: "loading" }));
+    api.consultationNotes.prescriptionHtml(noteId, { template: draft.prescriptionTemplate, draft: !previewSigned })
+      .then((html) => { if (live) setRx({ html, state: "ready" }); })
+      .catch((e) => {
+        if (!live) return;
+        const status = (e as { status?: number }).status;
+        setRx((r) => ({ html: r.html, state: status === 404 || status === 0 ? "unavailable" : "failed" }));
+      });
+    return () => { live = false; };
+  }, [noteId, note?.updatedAt, draft.prescriptionTemplate, previewSigned]);
+  const serverHtml = rx.state === "ready" || (rx.state === "loading" && rx.html) ? rx.html : null;
 
   const chosen = FOLLOW_UPS.find((c) => draft.followUpDate === addClinicDays(today, c.days))?.key ?? (draft.followUpDate ? "date" : noFollowUp ? "none" : "");
   // Treatments or advice alone are a legitimate note to sign.
@@ -887,10 +947,12 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
         followUpDate: noFollowUp ? null : draft.followUpDate || null, status: "Completed",
         primaryDiagnosis: draft.primaryDiagnosis, secondaryDiagnosis: draft.secondaryDiagnosis,
         skinCareAdvice: draft.skinCareAdvice, lifestyleAdvice: draft.lifestyleAdvice, precautions: draft.precautions,
+        prescriptionTemplate: draft.prescriptionTemplate,
         doctorId: me.data?.doctorId, doctorName: me.data?.name,
       } as Parameters<typeof api.consultationNotes.save>[0]);
       if (!res.data) throw new Error(res.message || "The note could not be signed");
       saved = res.data;
+      rememberTemplate(draft.prescriptionTemplate);
       // Whether THIS sign sent the email — a re-sign must not reuse an old stamp.
       emailed = res.prescriptionEmailed === true;
       onSigned(saved);
@@ -919,15 +981,34 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
     setBusy(false);
   };
 
-  const download = () => {
+  /** The server's document when we have it; otherwise the panel's own sheet, as before. */
+  const documentHtml = () => {
+    if (serverHtml) return serverHtml;
     const el = sheetRef.current;
-    if (!el) return;
+    if (!el) return null;
     const html = el.outerHTML.replace(/src="([^"]*zennara-logo[^"]*)"/, (_, src) => `src="${new URL(src, window.location.href).href}"`);
-    const doc = `<!doctype html><html><head><meta charset="utf-8"><title>Prescription — ${patient?.fullName ?? bk.fullName}</title><style>${RX_FILE_CSS}</style></head><body>${html}</body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8"><title>Prescription — ${patient?.fullName ?? bk.fullName}</title><style>${RX_FILE_CSS}</style></head><body>${html}</body></html>`;
+  };
+  const download = () => {
+    const doc = documentHtml();
+    if (!doc) return;
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([doc], { type: "text/html" }));
     a.download = `prescription-${(patient?.fullName ?? bk.fullName).toLowerCase().replace(/\s+/g, "-")}-${today}.html`;
     a.click();
+  };
+  const print = () => {
+    // Without the server's document the sheet on this page prints (the .dz-print rule).
+    if (!serverHtml) { window.print(); return; }
+    const w = window.open("", "_blank");
+    if (!w) { toast("Allow pop-ups for this site to print the prescription"); return; }
+    w.document.open();
+    w.document.write(serverHtml);
+    w.document.close();
+    const go = () => { w.focus(); w.print(); };
+    // Let the document's fonts and logo land before the print dialog snapshots it.
+    if (w.document.readyState === "complete") window.setTimeout(go, 300);
+    else w.addEventListener("load", () => window.setTimeout(go, 300), { once: true });
   };
 
   const checks: { ok: boolean | null; label: string; value: string; step?: Step }[] = [
@@ -951,7 +1032,7 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
               {note?.followUpDate && <span className="dz-pill"><History />Review on {fmtDate(note.followUpDate)}</span>}
             </div>
             <div className="dz-row">
-              <Btn onClick={() => window.print()}><Printer />Print or save PDF</Btn>
+              <Btn onClick={print}><Printer />Print or save PDF</Btn>
               <Btn kind="secondary" onClick={download}><Download />Download</Btn>
               {!!note?.prescription?.length && (
                 <Btn kind="secondary" disabled={sending} onClick={async () => {
@@ -1042,7 +1123,41 @@ function SignStep({ bk, patient, form, draft, note, signed, editing, doctorName,
         </div>
       )}
 
-      <RxSheet sheetRef={sheetRef} bk={bk} patient={patient} form={form} draft={draft} note={note} signed={signed && !editing} doctorName={doctorName} />
+      <div className="dz-layoutpick" role="radiogroup" aria-label="Prescription layout">
+        <div className="dz-layoutpick__head">
+          <b>Prescription layout</b>
+          <span className="dz-hint">How the guest's copy is laid out — on email, in the app and on paper.</span>
+        </div>
+        <div className="dz-layoutpick__cards">
+          {RX_TEMPLATES.map((t) => {
+            const on = draft.prescriptionTemplate === t.key;
+            return (
+              <button key={t.key} type="button" role="radio" aria-checked={on} className={`dz-layoutpick__card ${on ? "is-on" : ""}`}
+                onClick={() => { if (!on) onTemplate(t.key); }}>
+                <span className={`dz-layoutpick__swatch dz-layoutpick__swatch--${t.key}`} aria-hidden="true"><i /><i /><i /></span>
+                <span className="dz-layoutpick__text"><b>{t.name}</b><small>{t.tagline}</small></span>
+                <span className="dz-layoutpick__tick">{on && <Check />}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {serverHtml ? (
+        <div className="dz-rxframe">
+          {rx.state === "loading" && <div className="dz-rxframe__busy"><Loader2 className="animate-spin" />Rendering the {RX_TEMPLATES.find((t) => t.key === draft.prescriptionTemplate)?.name.toLowerCase()} layout…</div>}
+          {dirty && !previewSigned && <div className="dz-rxframe__hint">The preview shows the last saved draft — save to bring it up to date.</div>}
+          <iframe className="dz-rxframe__doc" title="Prescription preview" srcDoc={serverHtml} sandbox="" />
+        </div>
+      ) : noteId && rx.state === "loading" ? (
+        <div className="dz-rxframe"><div className="dz-rxframe__busy"><Loader2 className="animate-spin" />Rendering the printed layout…</div></div>
+      ) : (
+        <>
+          {!noteId && <Note className="my-0">Save the draft to preview the printed layout.</Note>}
+          {noteId && rx.state === "failed" && <Note kind="warn" className="my-0">Couldn’t load the printed layout — showing the panel’s copy instead.</Note>}
+          <RxSheet sheetRef={sheetRef} bk={bk} patient={patient} form={form} draft={draft} note={note} signed={previewSigned} doctorName={doctorName} />
+        </>
+      )}
     </>
   );
 }
