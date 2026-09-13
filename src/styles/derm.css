@@ -695,3 +695,13 @@
     .dz-print { position: absolute; top: 0; left: 0; width: 100%; padding: 0; border: 0; }
   }
 }
+
+/* One-time code, one digit per box (src/CodeInput.tsx). */
+.dz-code { position: relative; }
+.dz-code__boxes { display: flex; gap: 10px; justify-content: space-between; }
+.dz-code__box { display: flex; flex: 1; align-items: center; justify-content: center; min-height: 56px; border: 1px solid var(--color-border-strong); border-radius: 12px; background: var(--color-surface); color: var(--color-ink); font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; transition: border-color 0.15s; }
+.dz-code__box.is-filled { border-color: var(--color-primary); }
+.dz-code__box.is-active { border-color: var(--color-primary); outline: 3px solid var(--color-primary-soft); outline-offset: 0; }
+.dz-code__caret { display: inline-block; width: 2px; height: 24px; margin-left: 2px; background: var(--color-primary); animation: dz-caret 1s steps(2, start) infinite; }
+@keyframes dz-caret { to { visibility: hidden; } }
+.dz-code__input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: text; caret-color: transparent; }
