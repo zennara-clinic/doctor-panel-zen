@@ -404,7 +404,12 @@ export const schedules = {
     ),
   /** Day-level free counts, for painting the month. */
   days: (doctorId: string, from: string, to: string, branchId?: string | null) =>
-    request<{ configured: boolean; slotMinutes?: number; days: ScheduleDay[] }>(
+    request<{
+      configured: boolean; slotMinutes?: number; days: ScheduleDay[];
+      /** Last day Zenoti has ANY shift written — the end of what guests can book. */
+      rosteredTo?: string | null;
+      lastOpen?: string | null;
+    }>(
       `/dermatologists/${encodeURIComponent(doctorId)}/availability`,
       { query: { from, to, ...(branchId ? { branchId } : {}) } },
     ),

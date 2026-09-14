@@ -418,6 +418,12 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                       </div>
                     } />
 
+                  {!!days.data?.rosteredTo && (
+                    <div className="mb-3 rounded-r-md border-l-[3px] border-gold-dark bg-ivory px-3.5 py-2.5 text-[12.5px] text-ink2">
+                      Your roster is written to <b>{fmtDayKey(days.data.rosteredTo, { day: "numeric", month: "short", year: "numeric" })}</b>. Guests cannot book you past that day — faded dates have no shift yet.
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-7 gap-1 text-center">
                     {DAY_SHORT.map((d, i) => (
                       <div key={i} className="pb-1 font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-ink3">{d}</div>
@@ -430,13 +436,22 @@ export function Schedule({ doctorId: forced }: { doctorId?: string } = {}) {
                       const isOff = ov?.unavailable;
                       const custom = !!ov?.ranges?.length;
                       const free = info?.free ?? 0;
+                      /*
+                       * Nothing rostered that day. Faded to match what the
+                       * guest sees in the app, but still clickable — this is
+                       * the page where a day is GIVEN its hours, so making it
+                       * inert would remove the only way to fix it.
+                       */
+                      const unrostered = !isOff && (!info || info.total === 0);
 
                       return (
                         <button key={k} onClick={() => setOpenDate(openDate === k ? null : k)}
+                          title={unrostered ? "Nothing rostered — guests cannot book this day" : undefined}
                           className={[
                             "relative min-h-12 rounded-xl border py-1.5 text-[14px] transition-colors",
                             openDate === k ? "border-primary bg-sage font-extrabold" : "border-transparent hover:border-border",
                             isOff ? "text-err line-through" : free > 0 ? "text-ink" : "text-ink3",
+                            unrostered ? "opacity-40" : "",
                           ].join(" ")}>
                           {fromKey(k).getUTCDate()}
                           {/* Free count, so a day that looks open but is fully
